@@ -111,22 +111,7 @@ class BLESpamDetector(BinarySensorEntity):
         spam_type = None
         spam_details = {}
 
-        # Check for rapid advertisements (general spam behavior)
-        if address in self._device_last_seen:
-            time_diff = (now - self._device_last_seen[address]).total_seconds()
-            if time_diff < RAPID_AD_THRESHOLD:
-                spam_detected = True
-                spam_type = "rapid_advertising"
-                spam_details = {
-                    "interval": f"{time_diff:.2f}s",
-                    "threshold": f"{RAPID_AD_THRESHOLD}s",
-                }
-                _LOGGER.debug(
-                    "Rapid advertising detected from %s (%.2f seconds apart)",
-                    address,
-                    time_diff,
-                )
-
+        # Track last seen time (used for composite detection, not standalone spam detection)
         self._device_last_seen[address] = now
 
         # Check manufacturer data for spam patterns
@@ -341,16 +326,13 @@ class BLESpamDetector(BinarySensorEntity):
             # Set binary sensor to ON (spam detected)
             if not self._attr_is_on:
                 self._attr_is_on = True
-                self.async_write_ha_state()
-                # Only log warning for serious spam types (not rapid advertising alone)
-                if spam_type != "rapid_advertising":
-                    _LOGGER.warning(
-                        "BLE spam alert activated! Type: %s from %s",
-                        spam_type,
-                        address,
-                    )
-            else:
-                self.async_write_ha_state()
+                _LOGGER.warning(
+                    "BLE spam alert activated! Type: %s from %s",
+                    spam_type,
+                    address,
+                )
+
+            self.async_write_ha_state()
 
     @callback
     def _check_auto_reset(self, now: datetime) -> None:
