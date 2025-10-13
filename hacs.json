@@ -1,0 +1,9 @@
+{
+  "name": "HomaGotchi",
+  "content_in_root": false,
+  "filename": "homagotchi",
+  "render_readme": true,
+  "domains": ["binary_sensor", "text"],
+  "iot_class": "Local Polling",
+  "homeassistant": "2024.1.0"
+}

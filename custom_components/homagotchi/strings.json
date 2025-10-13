@@ -1,0 +1,4 @@
+{
+  "title": "HomaGotchi",
+  "description": "A Home Assistant integration that detects and monitors Flipper Zero devices in your network using Bluetooth scanning. Perfect for security monitoring and device tracking."
+}

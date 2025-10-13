@@ -1,0 +1,22 @@
+{
+  "title": "HomaGotchi",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HomaGotchi"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "flipper_zero_detected": {
+        "name": "Flipper Zero Detected",
+        "state": "Detected Flipper Zeros"
+      },
+      "ble_spam_detector": {
+        "name": "BLE Spam Detector",
+        "state": "BLE Spam Detection"
+      }
+    }
+  }
+}
