@@ -1,6 +1,7 @@
 """The HomaGotchi binary sensor platform."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -19,10 +20,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN, SPAM_PATTERNS, RAPID_AD_THRESHOLD
 
 _LOGGER = logging.getLogger(__name__)
+
+# Auto-reset timeout (seconds) - sensor resets if no spam detected for this duration
+AUTO_RESET_TIMEOUT = 60
 
 
 class BLESpamDetector(BinarySensorEntity):
@@ -48,6 +53,7 @@ class BLESpamDetector(BinarySensorEntity):
         self._spam_types: set[str] = set()
         self._last_spam_time = None
         self._device_last_seen: dict[str, datetime] = {}
+        self._reset_timer = None
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -71,6 +77,14 @@ class BLESpamDetector(BinarySensorEntity):
                 {},  # No filter, receive all advertisements
                 BluetoothScanningMode.ACTIVE,
             )
+
+            # Set up auto-reset timer
+            self._reset_timer = async_track_time_interval(
+                self.hass,
+                self._check_auto_reset,
+                timedelta(seconds=10),  # Check every 10 seconds
+            )
+
             _LOGGER.info("BLE spam detector initialized and monitoring")
         except Exception as e:
             _LOGGER.error("Error setting up BLE spam detector: %s", str(e))
@@ -80,7 +94,10 @@ class BLESpamDetector(BinarySensorEntity):
         if self._callback is not None:
             self._callback()
             self._callback = None
-            _LOGGER.info("BLE spam detector stopped")
+        if self._reset_timer is not None:
+            self._reset_timer()
+            self._reset_timer = None
+        _LOGGER.info("BLE spam detector stopped")
 
     @callback
     def _handle_bluetooth_advertisement(
@@ -335,6 +352,28 @@ class BLESpamDetector(BinarySensorEntity):
             else:
                 self.async_write_ha_state()
 
+    @callback
+    def _check_auto_reset(self, now: datetime) -> None:
+        """Check if sensor should auto-reset due to no recent spam."""
+        if not self._attr_is_on:
+            return  # Already off, nothing to do
+
+        if self._last_spam_time is None:
+            return  # No spam ever detected
+
+        time_since_last_spam = (datetime.now() - self._last_spam_time).total_seconds()
+
+        if time_since_last_spam > AUTO_RESET_TIMEOUT:
+            _LOGGER.info(
+                "Auto-resetting BLE spam detector - no spam detected for %d seconds",
+                int(time_since_last_spam)
+            )
+            self._attr_is_on = False
+            self._spam_count = 0
+            self._spam_types.clear()
+            self._spam_devices.clear()
+            self.async_write_ha_state()
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the state attributes."""
@@ -385,6 +424,7 @@ class FlipperZeroDetector(BinarySensorEntity):
         self._total_detections = 0
         self._last_detection_time = None
         self._device_last_seen: dict[str, datetime] = {}
+        self._reset_timer = None
 
         # Detection statistics
         self._color_counts = {
@@ -415,12 +455,24 @@ class FlipperZeroDetector(BinarySensorEntity):
                 {},  # No filter, receive all advertisements
                 BluetoothScanningMode.ACTIVE,
             )
+
+            # Set up auto-reset timer
+            self._reset_timer = async_track_time_interval(
+                self.hass,
+                self._check_auto_reset,
+                timedelta(seconds=10),
+            )
+
             _LOGGER.info("FlipperZero detector initialized and monitoring")
         except Exception as e:
             _LOGGER.error("Error setting up FlipperZero detector: %s", str(e))
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when removed from hass."""
+        if self._reset_timer is not None:
+            self._reset_timer()
+            self._reset_timer = None
+
         if self._callback is not None:
             self._callback()
             self._callback = None
@@ -541,6 +593,28 @@ class FlipperZeroDetector(BinarySensorEntity):
 
         # Update last seen time
         self._device_last_seen[address] = now
+
+    @callback
+    def _check_auto_reset(self, now: datetime) -> None:
+        """Check if sensor should auto-reset due to no recent FlipperZero detection."""
+        if not self._attr_is_on:
+            return  # Already off, nothing to do
+
+        if self._last_detection_time is None:
+            return  # No detection ever
+
+        time_since_last_detection = (datetime.now() - self._last_detection_time).total_seconds()
+
+        if time_since_last_detection > AUTO_RESET_TIMEOUT:
+            _LOGGER.info(
+                "Auto-resetting FlipperZero detector - no detection for %d seconds",
+                int(time_since_last_detection)
+            )
+            self._attr_is_on = False
+            self._total_detections = 0
+            self._flipper_devices.clear()
+            self._color_counts = {"Black": 0, "White": 0, "Orange": 0}
+            self.async_write_ha_state()
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

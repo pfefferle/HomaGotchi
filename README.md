@@ -8,9 +8,9 @@ A Pwnagotchi-inspired Home Assistant integration with BLE spam detection and Fli
 
 ## Features
 
-🎭 **ASCII Face Display** - Animated Pwnagotchi-style faces that change every 30 seconds  
-🚨 **BLE Spam Detection** - Detects various Bluetooth Low Energy spam attacks  
-🐬 **FlipperZero Detection** - Specialized detector for FlipperZero devices and ESP32 Marauder attacks  
+🎭 **ASCII Face Display** - Animated Pwnagotchi-style faces that change every 30 seconds
+🚨 **BLE Spam Detection** - Detects various Bluetooth Low Energy spam attacks
+🐬 **FlipperZero Detection** - Specialized detector for FlipperZero devices and ESP32 Marauder attacks
 🛡️ **Smart Filtering** - Distinguishes between legitimate devices and actual attacks
 
 ### Detected Attack Types
