@@ -9,16 +9,19 @@ CONF_AUTO_RESET_TIMEOUT = "auto_reset_timeout"
 CONF_FLIPPER_INTENSITY_THRESHOLD = "flipper_intensity_threshold"
 CONF_FLIPPER_INTENSITY_WINDOW = "flipper_intensity_window"
 
-# Default values
-DEFAULT_INTENSITY_THRESHOLD = 5
-DEFAULT_INTENSITY_WINDOW = 30
-DEFAULT_AUTO_RESET_TIMEOUT = 60
-DEFAULT_FLIPPER_INTENSITY_THRESHOLD = 3
-DEFAULT_FLIPPER_INTENSITY_WINDOW = 20
+# Default values - More conservative to reduce false positives
+# BLE spam typically generates 100+ packets per minute, so we need sustained attacks
+DEFAULT_INTENSITY_THRESHOLD = 10  # Increased from 5 to require more events
+DEFAULT_INTENSITY_WINDOW = 30  # 30 second window
+DEFAULT_AUTO_RESET_TIMEOUT = 60  # Auto-reset after 60 seconds of no detections
+DEFAULT_FLIPPER_INTENSITY_THRESHOLD = 5  # Increased from 3 for FlipperZero
+DEFAULT_FLIPPER_INTENSITY_WINDOW = 20  # 20 second window
 
-# Detection thresholds
-RAPID_MAC_THRESHOLD = 1.0  # Seconds - rapid MAC address changes threshold
-AIRTAG_RAPID_THRESHOLD = 0.5  # Seconds - AirTag spoofing threshold
+# Detection thresholds for rapid advertising
+# Real BLE spam attacks send packets very rapidly (often 10-100+ per second)
+# Legitimate devices typically advertise every 1-5 seconds
+RAPID_MAC_THRESHOLD = 0.3  # Seconds - devices advertising faster than 3x per second are suspicious
+AIRTAG_RAPID_THRESHOLD = 0.2  # Seconds - AirTag spoofing is even more aggressive
 
 # ASCII faces for the Pwnagotchi-style display
 FACES = [

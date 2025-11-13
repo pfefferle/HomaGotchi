@@ -136,7 +136,12 @@ class BLESpamDetector(BinarySensorEntity):
         spam_type = None
         spam_details = {}
 
-        # Track last seen time (used for composite detection, not standalone spam detection)
+        # Check if this is a rapid MAC address change (before updating last seen time)
+        time_since_last_seen = None
+        if address in self._device_last_seen:
+            time_since_last_seen = (now - self._device_last_seen[address]).total_seconds()
+
+        # Update last seen time for this address
         self._device_last_seen[address] = now
 
         # Check manufacturer data for spam patterns
@@ -146,26 +151,26 @@ class BLESpamDetector(BinarySensorEntity):
                 if company_id == SPAM_PATTERNS["apple_continuity"]["company_id"]:
                     if len(data) >= 1:
                         # Only flag as spam if it shows attack characteristics:
-                        # 1. Rapid MAC address changes (device appearing with different MACs quickly)
+                        # 1. Rapid MAC address changes (same device seen multiple times very quickly)
                         # 2. Random/unknown device names (not legitimate Apple devices)
                         # 3. Anomalous patterns (very short data, unusual formats)
 
                         is_suspicious = False
 
-                        # Check for rapid MAC changes (SourApple characteristic)
-                        if address in self._device_last_seen:
-                            time_diff = (now - self._device_last_seen[address]).total_seconds()
-                            if time_diff < RAPID_MAC_THRESHOLD:  # Very rapid changes suggest spoofing
-                                is_suspicious = True
+                        # Check for rapid repeated advertisements from same MAC (spam characteristic)
+                        if time_since_last_seen is not None and time_since_last_seen < RAPID_MAC_THRESHOLD:
+                            is_suspicious = True
 
                         # Check for random/spoofed device (no name or random MAC)
                         has_legitimate_name = service_info.name and not service_info.name.startswith(address[:8])
 
                         # Check for anomalous data patterns (legitimate Apple devices have consistent patterns)
+                        # Real Apple devices send properly formatted manufacturer data
                         is_anomalous = len(data) < 3 or (data[0] == 0x12 and len(data) == 4)  # Fake AirTag pattern
 
-                        # Only flag if multiple suspicious indicators
-                        if (is_suspicious and not has_legitimate_name) or is_anomalous:
+                        # Only flag if BOTH suspicious rapid advertising AND no legitimate name
+                        # OR if data pattern is clearly anomalous
+                        if (is_suspicious and not has_legitimate_name and is_anomalous):
                             for prefix in SPAM_PATTERNS["apple_continuity"]["type_prefixes"]:
                                 if data[: len(prefix)] == prefix:
                                     spam_detected = True
@@ -184,31 +189,34 @@ class BLESpamDetector(BinarySensorEntity):
                                     )
                                     break
 
-                # Check Microsoft spam
+                # Check Microsoft spam - only flag if rapid advertising without legitimate name
                 elif company_id == SPAM_PATTERNS["microsoft_swift_pair"]["company_id"]:
-                    spam_detected = True
-                    spam_type = "microsoft_swift_pair"
-                    spam_details = {
-                        "company_id": hex(company_id),
-                        "data": data.hex(),
-                    }
-                    _LOGGER.warning("Microsoft Swift Pair spam detected from %s", address)
+                    # Microsoft devices legitimately use Swift Pair, so check for spam characteristics
+                    is_rapid_microsoft = time_since_last_seen is not None and time_since_last_seen < RAPID_MAC_THRESHOLD
+                    has_ms_name = service_info.name and any(x in service_info.name.lower() for x in ["surface", "xbox", "microsoft"])
+
+                    # Only flag if rapid advertising without a legitimate Microsoft device name
+                    if is_rapid_microsoft and not has_ms_name:
+                        spam_detected = True
+                        spam_type = "microsoft_swift_pair"
+                        spam_details = {
+                            "company_id": hex(company_id),
+                            "data": data.hex(),
+                        }
+                        _LOGGER.warning("Microsoft Swift Pair spam detected from %s", address)
 
                 # Check Samsung spam (only flag obvious attack patterns)
                 elif company_id == SPAM_PATTERNS["samsung_spam"]["company_id"]:
                     if len(data) >= 1:
                         # Only flag Samsung spam if showing attack characteristics:
-                        # - Rapid MAC changes without legitimate device name
+                        # - Rapid repeated advertisements (same MAC seen very quickly)
                         # - SmartTag spam patterns with spoofed identifiers
+                        # - No legitimate Samsung device name
 
-                        is_rapid = False
-                        if address in self._device_last_seen:
-                            time_diff = (now - self._device_last_seen[address]).total_seconds()
-                            is_rapid = time_diff < RAPID_MAC_THRESHOLD
-
+                        is_rapid = time_since_last_seen is not None and time_since_last_seen < RAPID_MAC_THRESHOLD
                         has_legitimate_name = service_info.name and "Samsung" in service_info.name
 
-                        # Only flag if rapid changes without legitimate name (spam attack)
+                        # Only flag if rapid repeated advertising AND no legitimate name AND specific spam prefix
                         if is_rapid and not has_legitimate_name:
                             for prefix in SPAM_PATTERNS["samsung_spam"]["type_prefixes"]:
                                 if data[: len(prefix)] == prefix:
@@ -226,24 +234,35 @@ class BLESpamDetector(BinarySensorEntity):
             for uuid_str, data in service_info.service_data.items():
                 uuid_upper = uuid_str.upper()
 
-                # Check Google Fast Pair spam
+                # Check Google Fast Pair spam - only flag if rapid advertising
+                # Legitimate Google devices use Fast Pair, so check for spam characteristics
                 if "FE2C" in uuid_upper or "0000FE2C" in uuid_upper:
-                    spam_detected = True
-                    spam_type = "google_fast_pair"
-                    spam_details = {
-                        "service_uuid": uuid_str,
-                        "data": data.hex() if isinstance(data, bytes) else str(data),
-                    }
-                    _LOGGER.warning("Google Fast Pair spam detected from %s", address)
+                    is_rapid_google = time_since_last_seen is not None and time_since_last_seen < RAPID_MAC_THRESHOLD
+                    has_google_name = service_info.name and any(x in service_info.name.lower() for x in ["pixel", "google", "nest"])
 
-                # Check Tile spam
+                    # Only flag if rapid advertising without legitimate Google device name
+                    if is_rapid_google and not has_google_name:
+                        spam_detected = True
+                        spam_type = "google_fast_pair"
+                        spam_details = {
+                            "service_uuid": uuid_str,
+                            "data": data.hex() if isinstance(data, bytes) else str(data),
+                        }
+                        _LOGGER.warning("Google Fast Pair spam detected from %s", address)
+
+                # Check Tile spam - only flag if rapid advertising without Tile name
                 elif "FEED" in uuid_upper:
-                    spam_detected = True
-                    spam_type = "tile_spam"
-                    spam_details = {
-                        "service_uuid": uuid_str,
-                    }
-                    _LOGGER.warning("Tile tracker spam detected from %s", address)
+                    is_rapid_tile = time_since_last_seen is not None and time_since_last_seen < RAPID_MAC_THRESHOLD
+                    has_tile_name = service_info.name and "Tile" in service_info.name
+
+                    # Only flag if rapid advertising without legitimate Tile device name
+                    if is_rapid_tile and not has_tile_name:
+                        spam_detected = True
+                        spam_type = "tile_spam"
+                        spam_details = {
+                            "service_uuid": uuid_str,
+                        }
+                        _LOGGER.warning("Tile tracker spam detected from %s", address)
 
         # Check for FlipperZero BLE spam by Service UUIDs (primary detection method)
         if service_info.service_uuids:
@@ -302,32 +321,34 @@ class BLESpamDetector(BinarySensorEntity):
                             break
 
         # Check for AirTag spoofing (fake AirTag broadcasts)
-        # Only flag if showing clear attack pattern: rapid MAC changes + minimal data
-        if service_info.manufacturer_data:
+        # Only flag if showing clear attack pattern: rapid repeated advertisements + minimal data
+        if not spam_detected and service_info.manufacturer_data:
             for company_id, data in service_info.manufacturer_data.items():
                 if company_id == SPAM_PATTERNS["airtag_spoof"]["company_id"]:
                     if len(data) >= 1:
                         for prefix in SPAM_PATTERNS["airtag_spoof"]["type_prefixes"]:
                             if data[: len(prefix)] == prefix:
-                                # Only flag as spoofing attack if BOTH conditions met:
-                                # 1. Very rapid MAC address changes (< 0.5s)
+                                # Only flag as spoofing attack if ALL conditions met:
+                                # 1. Very rapid repeated advertisements from same MAC (< 0.5s)
                                 # 2. Minimal data payload (typical of spam attacks)
-                                if address in self._device_last_seen and len(data) <= 4:
-                                    time_diff = (now - self._device_last_seen.get(address, now)).total_seconds()
-                                    if time_diff < AIRTAG_RAPID_THRESHOLD:  # Very rapid = attack
-                                        spam_detected = True
-                                        spam_type = "airtag_spoof"
-                                        spam_details = {
-                                            "company_id": hex(company_id),
-                                            "data_prefix": data[:2].hex(),
-                                            "rapid_mac_change": True,
-                                            "interval": f"{time_diff:.2f}s",
-                                        }
-                                        _LOGGER.warning(
-                                            "AirTag spoofing attack detected from %s (rapid MAC changes)",
-                                            address,
-                                        )
-                                        break
+                                # 3. No legitimate Apple device name
+                                has_apple_name = service_info.name and any(x in service_info.name for x in ["AirTag", "iPhone", "iPad", "Mac"])
+
+                                if time_since_last_seen is not None and time_since_last_seen < AIRTAG_RAPID_THRESHOLD and len(data) <= 4 and not has_apple_name:
+                                    spam_detected = True
+                                    spam_type = "airtag_spoof"
+                                    spam_details = {
+                                        "company_id": hex(company_id),
+                                        "data_prefix": data[:2].hex(),
+                                        "rapid_mac_change": True,
+                                        "interval": f"{time_since_last_seen:.2f}s",
+                                    }
+                                    _LOGGER.warning(
+                                        "AirTag spoofing attack detected from %s (rapid advertising: %.2fs)",
+                                        address,
+                                        time_since_last_seen,
+                                    )
+                                    break
 
         # Update spam tracking if spam was detected
         if spam_detected and spam_type:
