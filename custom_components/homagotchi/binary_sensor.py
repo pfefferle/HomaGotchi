@@ -398,9 +398,12 @@ class BLESpamDetector(BinarySensorEntity):
             # Calculate current intensity
             intensity = self._calculate_intensity(now)
 
-            # Only trigger alert if intensity exceeds threshold
+            # Check if we should trigger based on intensity threshold
             # Exception: FlipperZero detection always triggers (it's definitive)
-            if intensity >= self._intensity_threshold or spam_type == "flipper_zero":
+            intensity_met = intensity >= self._intensity_threshold or spam_type == "flipper_zero"
+
+            # Count ALL spam packets once sensor is ON, or if intensity threshold is met
+            if self._attr_is_on or intensity_met:
                 self._spam_count += 1
                 self._spam_types.add(spam_type)
                 self._last_spam_time = now
@@ -418,8 +421,8 @@ class BLESpamDetector(BinarySensorEntity):
                     "details": spam_details,
                 }
 
-                # Set binary sensor to ON (spam attack detected with sufficient intensity)
-                if not self._attr_is_on:
+                # Set binary sensor to ON if intensity threshold is met
+                if not self._attr_is_on and intensity_met:
                     self._attr_is_on = True
                     _LOGGER.warning(
                         "BLE spam attack detected! Type: %s, Intensity: %d/%d events in %ds from %s",
@@ -430,11 +433,6 @@ class BLESpamDetector(BinarySensorEntity):
                         address,
                     )
 
-                self.async_write_ha_state()
-            elif self._attr_is_on:
-                # If sensor is already ON, update last spam time to prevent auto-reset
-                # This keeps the sensor ON as long as spam is being detected
-                self._last_spam_time = now
                 self.async_write_ha_state()
             else:
                 # Suspicious but not enough intensity yet
