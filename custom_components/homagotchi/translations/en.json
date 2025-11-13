@@ -3,7 +3,42 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up HomaGotchi"
+        "title": "Set up HomaGotchi",
+        "description": "HomaGotchi will monitor Bluetooth Low Energy (BLE) spam attacks and FlipperZero devices."
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "HomaGotchi Options",
+        "description": "Configure detection sensitivity and auto-reset behavior",
+        "data": {
+          "intensity_threshold": "BLE Spam Intensity Threshold (events required)",
+          "intensity_window": "BLE Spam Detection Window (seconds)",
+          "auto_reset_timeout": "Auto-Reset Timeout (seconds)",
+          "flipper_intensity_threshold": "FlipperZero Intensity Threshold (events required)",
+          "flipper_intensity_window": "FlipperZero Detection Window (seconds)"
+        },
+        "data_description": {
+          "intensity_threshold": "Number of suspicious BLE events required within the time window to trigger detection",
+          "intensity_window": "Time window in seconds for counting suspicious BLE events",
+          "auto_reset_timeout": "Time in seconds before sensors auto-reset if no new detections occur",
+          "flipper_intensity_threshold": "Number of FlipperZero detections required within the time window to trigger alert",
+          "flipper_intensity_window": "Time window in seconds for counting FlipperZero detections"
+        }
+      }
+    }
+  },
+  "services": {
+    "set_face": {
+      "name": "Set Face",
+      "description": "Set the Pwnagotchi face to a specific expression",
+      "fields": {
+        "face_index": {
+          "name": "Face Index",
+          "description": "Index of the face expression (0-20)"
+        }
       }
     }
   },

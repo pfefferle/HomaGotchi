@@ -1,7 +1,7 @@
 {
   "domain": "homagotchi",
   "name": "HomaGotchi",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "documentation": "https://github.com/pfefferle/homagotchi",
   "issue_tracker": "https://github.com/pfefferle/homagotchi/issues",
   "requirements": ["bleak>=0.20.2"],

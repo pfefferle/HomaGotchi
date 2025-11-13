@@ -1,5 +1,21 @@
-from homeassistant.config_entries import ConfigFlow
-from .const import DOMAIN
+from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlow
+from homeassistant.core import callback
+import voluptuous as vol
+from typing import Any
+
+from .const import (
+    DOMAIN,
+    CONF_INTENSITY_THRESHOLD,
+    CONF_INTENSITY_WINDOW,
+    CONF_AUTO_RESET_TIMEOUT,
+    CONF_FLIPPER_INTENSITY_THRESHOLD,
+    CONF_FLIPPER_INTENSITY_WINDOW,
+    DEFAULT_INTENSITY_THRESHOLD,
+    DEFAULT_INTENSITY_WINDOW,
+    DEFAULT_AUTO_RESET_TIMEOUT,
+    DEFAULT_FLIPPER_INTENSITY_THRESHOLD,
+    DEFAULT_FLIPPER_INTENSITY_WINDOW,
+)
 
 class HomaGotchiConfigFlow(ConfigFlow):
     """Handle a config flow for HomaGotchi."""
@@ -7,7 +23,75 @@ class HomaGotchiConfigFlow(ConfigFlow):
     VERSION = 1
     DOMAIN = DOMAIN
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Get the options flow for this handler."""
+        return HomaGotchiOptionsFlow(config_entry)
+
     async def async_step_user(self, user_input=None):
+        """Handle the initial step."""
         if user_input is not None:
-            return self.async_create_entry(title="HomaGotchi", data={})
+            return self.async_create_entry(
+                title="HomaGotchi",
+                data={},
+                options={
+                    CONF_INTENSITY_THRESHOLD: DEFAULT_INTENSITY_THRESHOLD,
+                    CONF_INTENSITY_WINDOW: DEFAULT_INTENSITY_WINDOW,
+                    CONF_AUTO_RESET_TIMEOUT: DEFAULT_AUTO_RESET_TIMEOUT,
+                    CONF_FLIPPER_INTENSITY_THRESHOLD: DEFAULT_FLIPPER_INTENSITY_THRESHOLD,
+                    CONF_FLIPPER_INTENSITY_WINDOW: DEFAULT_FLIPPER_INTENSITY_WINDOW,
+                }
+            )
         return self.async_show_form(step_id="user")
+
+
+class HomaGotchiOptionsFlow(OptionsFlow):
+    """Handle options flow for HomaGotchi."""
+
+    def __init__(self, config_entry: ConfigEntry) -> None:
+        """Initialize options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_INTENSITY_THRESHOLD,
+                        default=self.config_entry.options.get(
+                            CONF_INTENSITY_THRESHOLD, DEFAULT_INTENSITY_THRESHOLD
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+                    vol.Optional(
+                        CONF_INTENSITY_WINDOW,
+                        default=self.config_entry.options.get(
+                            CONF_INTENSITY_WINDOW, DEFAULT_INTENSITY_WINDOW
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
+                    vol.Optional(
+                        CONF_AUTO_RESET_TIMEOUT,
+                        default=self.config_entry.options.get(
+                            CONF_AUTO_RESET_TIMEOUT, DEFAULT_AUTO_RESET_TIMEOUT
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
+                    vol.Optional(
+                        CONF_FLIPPER_INTENSITY_THRESHOLD,
+                        default=self.config_entry.options.get(
+                            CONF_FLIPPER_INTENSITY_THRESHOLD, DEFAULT_FLIPPER_INTENSITY_THRESHOLD
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+                    vol.Optional(
+                        CONF_FLIPPER_INTENSITY_WINDOW,
+                        default=self.config_entry.options.get(
+                            CONF_FLIPPER_INTENSITY_WINDOW, DEFAULT_FLIPPER_INTENSITY_WINDOW
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
+                }
+            ),
+        )

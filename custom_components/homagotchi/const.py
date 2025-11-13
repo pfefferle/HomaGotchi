@@ -2,6 +2,24 @@
 
 DOMAIN = "homagotchi"
 
+# Configuration options
+CONF_INTENSITY_THRESHOLD = "intensity_threshold"
+CONF_INTENSITY_WINDOW = "intensity_window"
+CONF_AUTO_RESET_TIMEOUT = "auto_reset_timeout"
+CONF_FLIPPER_INTENSITY_THRESHOLD = "flipper_intensity_threshold"
+CONF_FLIPPER_INTENSITY_WINDOW = "flipper_intensity_window"
+
+# Default values
+DEFAULT_INTENSITY_THRESHOLD = 5
+DEFAULT_INTENSITY_WINDOW = 30
+DEFAULT_AUTO_RESET_TIMEOUT = 60
+DEFAULT_FLIPPER_INTENSITY_THRESHOLD = 3
+DEFAULT_FLIPPER_INTENSITY_WINDOW = 20
+
+# Detection thresholds
+RAPID_MAC_THRESHOLD = 1.0  # Seconds - rapid MAC address changes threshold
+AIRTAG_RAPID_THRESHOLD = 0.5  # Seconds - AirTag spoofing threshold
+
 # ASCII faces for the Pwnagotchi-style display
 FACES = [
     "(⇀‿‿↼)",  # sleeping
@@ -91,5 +109,3 @@ SPAM_PATTERNS = {
     },
 }
 
-# Rapid advertisement detection threshold (seconds)
-RAPID_AD_THRESHOLD = 0.5

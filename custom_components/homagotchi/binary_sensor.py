@@ -22,12 +22,24 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.event import async_track_time_interval
 
-from .const import DOMAIN, SPAM_PATTERNS, RAPID_AD_THRESHOLD
+from .const import (
+    DOMAIN,
+    SPAM_PATTERNS,
+    RAPID_MAC_THRESHOLD,
+    AIRTAG_RAPID_THRESHOLD,
+    CONF_INTENSITY_THRESHOLD,
+    CONF_INTENSITY_WINDOW,
+    CONF_AUTO_RESET_TIMEOUT,
+    CONF_FLIPPER_INTENSITY_THRESHOLD,
+    CONF_FLIPPER_INTENSITY_WINDOW,
+    DEFAULT_INTENSITY_THRESHOLD,
+    DEFAULT_INTENSITY_WINDOW,
+    DEFAULT_AUTO_RESET_TIMEOUT,
+    DEFAULT_FLIPPER_INTENSITY_THRESHOLD,
+    DEFAULT_FLIPPER_INTENSITY_WINDOW,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-# Auto-reset timeout (seconds) - sensor resets if no spam detected for this duration
-AUTO_RESET_TIMEOUT = 60
 
 
 class BLESpamDetector(BinarySensorEntity):
@@ -35,12 +47,12 @@ class BLESpamDetector(BinarySensorEntity):
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:bluetooth-connect" \
-    ""
+    _attr_icon = "mdi:bluetooth-connect"
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the BLE spam detector."""
         self.hass = hass
+        self._entry = entry
         self._attr_name = "BLE Spam Detected"
         self._attr_unique_id = f"{DOMAIN}_ble_spam_detector"
         self._attr_is_on = False
@@ -54,6 +66,19 @@ class BLESpamDetector(BinarySensorEntity):
         self._last_spam_time = None
         self._device_last_seen: dict[str, datetime] = {}
         self._reset_timer = None
+
+        # Intensity tracking - detect spam patterns over time
+        self._suspicious_events: list[tuple[datetime, str, str]] = []  # (timestamp, address, type)
+        # Get configuration options with defaults
+        self._intensity_threshold = entry.options.get(
+            CONF_INTENSITY_THRESHOLD, DEFAULT_INTENSITY_THRESHOLD
+        )
+        self._intensity_window = entry.options.get(
+            CONF_INTENSITY_WINDOW, DEFAULT_INTENSITY_WINDOW
+        )
+        self._auto_reset_timeout = entry.options.get(
+            CONF_AUTO_RESET_TIMEOUT, DEFAULT_AUTO_RESET_TIMEOUT
+        )
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -130,7 +155,7 @@ class BLESpamDetector(BinarySensorEntity):
                         # Check for rapid MAC changes (SourApple characteristic)
                         if address in self._device_last_seen:
                             time_diff = (now - self._device_last_seen[address]).total_seconds()
-                            if time_diff < 1.0:  # Very rapid changes suggest spoofing
+                            if time_diff < RAPID_MAC_THRESHOLD:  # Very rapid changes suggest spoofing
                                 is_suspicious = True
 
                         # Check for random/spoofed device (no name or random MAC)
@@ -179,7 +204,7 @@ class BLESpamDetector(BinarySensorEntity):
                         is_rapid = False
                         if address in self._device_last_seen:
                             time_diff = (now - self._device_last_seen[address]).total_seconds()
-                            is_rapid = time_diff < 1.0
+                            is_rapid = time_diff < RAPID_MAC_THRESHOLD
 
                         has_legitimate_name = service_info.name and "Samsung" in service_info.name
 
@@ -289,7 +314,7 @@ class BLESpamDetector(BinarySensorEntity):
                                 # 2. Minimal data payload (typical of spam attacks)
                                 if address in self._device_last_seen and len(data) <= 4:
                                     time_diff = (now - self._device_last_seen.get(address, now)).total_seconds()
-                                    if time_diff < 0.5:  # Very rapid = attack
+                                    if time_diff < AIRTAG_RAPID_THRESHOLD:  # Very rapid = attack
                                         spam_detected = True
                                         spam_type = "airtag_spoof"
                                         spam_details = {
@@ -306,33 +331,54 @@ class BLESpamDetector(BinarySensorEntity):
 
         # Update spam tracking if spam was detected
         if spam_detected and spam_type:
-            self._spam_count += 1
-            self._spam_types.add(spam_type)
-            self._last_spam_time = now
+            # Add to suspicious events for intensity tracking
+            self._suspicious_events.append((now, address, spam_type))
 
-            # Store spam device info
-            self._spam_devices[address] = {
-                "type": spam_type,
-                "name": service_info.name or "Unknown",
-                "rssi": service_info.rssi,
-                "first_seen": self._spam_devices.get(address, {}).get(
-                    "first_seen", now
-                ),
-                "last_seen": now,
-                "count": self._spam_devices.get(address, {}).get("count", 0) + 1,
-                "details": spam_details,
-            }
+            # Calculate current intensity
+            intensity = self._calculate_intensity(now)
 
-            # Set binary sensor to ON (spam detected)
-            if not self._attr_is_on:
-                self._attr_is_on = True
-                _LOGGER.warning(
-                    "BLE spam alert activated! Type: %s from %s",
+            # Only trigger alert if intensity exceeds threshold
+            # Exception: FlipperZero detection always triggers (it's definitive)
+            if intensity >= self._intensity_threshold or spam_type == "flipper_zero":
+                self._spam_count += 1
+                self._spam_types.add(spam_type)
+                self._last_spam_time = now
+
+                # Store spam device info
+                self._spam_devices[address] = {
+                    "type": spam_type,
+                    "name": service_info.name or "Unknown",
+                    "rssi": service_info.rssi,
+                    "first_seen": self._spam_devices.get(address, {}).get(
+                        "first_seen", now
+                    ),
+                    "last_seen": now,
+                    "count": self._spam_devices.get(address, {}).get("count", 0) + 1,
+                    "details": spam_details,
+                }
+
+                # Set binary sensor to ON (spam attack detected with sufficient intensity)
+                if not self._attr_is_on:
+                    self._attr_is_on = True
+                    _LOGGER.warning(
+                        "BLE spam attack detected! Type: %s, Intensity: %d/%d events in %ds from %s",
+                        spam_type,
+                        intensity,
+                        self._intensity_threshold,
+                        self._intensity_window,
+                        address,
+                    )
+
+                self.async_write_ha_state()
+            else:
+                # Suspicious but not enough intensity yet
+                _LOGGER.debug(
+                    "Suspicious BLE activity: %s from %s (intensity: %d/%d)",
                     spam_type,
                     address,
+                    intensity,
+                    self._intensity_threshold,
                 )
-
-            self.async_write_ha_state()
 
     @callback
     def _check_auto_reset(self, now: datetime) -> None:
@@ -345,7 +391,7 @@ class BLESpamDetector(BinarySensorEntity):
 
         time_since_last_spam = (datetime.now() - self._last_spam_time).total_seconds()
 
-        if time_since_last_spam > AUTO_RESET_TIMEOUT:
+        if time_since_last_spam > self._auto_reset_timeout:
             _LOGGER.info(
                 "Auto-resetting BLE spam detector - no spam detected for %d seconds",
                 int(time_since_last_spam)
@@ -354,7 +400,19 @@ class BLESpamDetector(BinarySensorEntity):
             self._spam_count = 0
             self._spam_types.clear()
             self._spam_devices.clear()
+            self._suspicious_events.clear()
             self.async_write_ha_state()
+
+    def _calculate_intensity(self, now: datetime) -> int:
+        """Calculate current spam intensity based on recent suspicious events."""
+        # Remove events outside the time window
+        cutoff_time = now - timedelta(seconds=self._intensity_window)
+        self._suspicious_events = [
+            (ts, addr, evt_type)
+            for ts, addr, evt_type in self._suspicious_events
+            if ts > cutoff_time
+        ]
+        return len(self._suspicious_events)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -372,6 +430,9 @@ class BLESpamDetector(BinarySensorEntity):
                 "details": info["details"],
             })
 
+        # Calculate current intensity for display
+        current_intensity = self._calculate_intensity(datetime.now())
+
         return {
             "spam_detected": self._attr_is_on,
             "total_spam_count": self._spam_count,
@@ -379,6 +440,12 @@ class BLESpamDetector(BinarySensorEntity):
             "spam_types_detected": list(self._spam_types),
             "last_spam_time": self._last_spam_time.isoformat() if self._last_spam_time else None,
             "spam_devices": spam_devices_list,
+            "intensity": {
+                "current": current_intensity,
+                "threshold": self._intensity_threshold,
+                "window_seconds": self._intensity_window,
+                "status": "attacking" if current_intensity >= self._intensity_threshold else "monitoring",
+            },
             "known_spam_patterns": {
                 k: v["description"] for k, v in SPAM_PATTERNS.items()
             },
@@ -395,6 +462,7 @@ class FlipperZeroDetector(BinarySensorEntity):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the FlipperZero detector."""
         self.hass = hass
+        self._entry = entry
         self._attr_name = "FlipperZero Detected"
         self._attr_unique_id = f"{DOMAIN}_flipper_zero_detector"
         self._attr_is_on = False
@@ -414,6 +482,19 @@ class FlipperZeroDetector(BinarySensorEntity):
             "White": 0,
             "Orange": 0,
         }
+
+        # Intensity tracking for FlipperZero
+        self._flipper_events: list[tuple[datetime, str, str]] = []  # (timestamp, address, color)
+        # Get configuration options with defaults
+        self._intensity_threshold = entry.options.get(
+            CONF_FLIPPER_INTENSITY_THRESHOLD, DEFAULT_FLIPPER_INTENSITY_THRESHOLD
+        )
+        self._intensity_window = entry.options.get(
+            CONF_FLIPPER_INTENSITY_WINDOW, DEFAULT_FLIPPER_INTENSITY_WINDOW
+        )
+        self._auto_reset_timeout = entry.options.get(
+            CONF_AUTO_RESET_TIMEOUT, DEFAULT_AUTO_RESET_TIMEOUT
+        )
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -542,36 +623,56 @@ class FlipperZeroDetector(BinarySensorEntity):
 
         # Update tracking if FlipperZero was detected
         if flipper_detected:
-            self._total_detections += 1
-            self._last_detection_time = now
+            # Add to events for intensity tracking
+            self._flipper_events.append((now, address, flipper_color or "Unknown"))
 
-            if flipper_color:
-                self._color_counts[flipper_color] += 1
+            # Calculate current intensity
+            intensity = self._calculate_flipper_intensity(now)
 
-            # Store or update device info
-            if address not in self._flipper_devices:
-                self._flipper_devices[address] = {
-                    "first_seen": now,
-                    "last_seen": now,
-                    "detection_count": 1,
-                    "color": flipper_color,
-                    "details": detection_details,
-                }
+            # Only trigger alert if intensity exceeds threshold
+            if intensity >= self._intensity_threshold:
+                self._total_detections += 1
+                self._last_detection_time = now
+
+                if flipper_color:
+                    self._color_counts[flipper_color] += 1
+
+                # Store or update device info
+                if address not in self._flipper_devices:
+                    self._flipper_devices[address] = {
+                        "first_seen": now,
+                        "last_seen": now,
+                        "detection_count": 1,
+                        "color": flipper_color,
+                        "details": detection_details,
+                    }
+                else:
+                    self._flipper_devices[address]["last_seen"] = now
+                    self._flipper_devices[address]["detection_count"] += 1
+                    self._flipper_devices[address]["details"] = detection_details
+
+                # Set binary sensor to ON (FlipperZero attack confirmed)
+                if not self._attr_is_on:
+                    self._attr_is_on = True
+                    _LOGGER.warning(
+                        "🐬 FlipperZero attack detected! Color: %s, Intensity: %d/%d in %ds from %s",
+                        flipper_color,
+                        intensity,
+                        self._intensity_threshold,
+                        self._intensity_window,
+                        address,
+                    )
+
+                self.async_write_ha_state()
             else:
-                self._flipper_devices[address]["last_seen"] = now
-                self._flipper_devices[address]["detection_count"] += 1
-                self._flipper_devices[address]["details"] = detection_details
-
-            # Set binary sensor to ON (FlipperZero detected)
-            if not self._attr_is_on:
-                self._attr_is_on = True
-                _LOGGER.warning(
-                    "🐬 FlipperZero alert activated! Color: %s from %s",
+                # Detected but not enough intensity yet
+                _LOGGER.debug(
+                    "FlipperZero signal detected: %s from %s (intensity: %d/%d)",
                     flipper_color,
                     address,
+                    intensity,
+                    self._intensity_threshold,
                 )
-
-            self.async_write_ha_state()
 
         # Update last seen time
         self._device_last_seen[address] = now
@@ -587,7 +688,7 @@ class FlipperZeroDetector(BinarySensorEntity):
 
         time_since_last_detection = (datetime.now() - self._last_detection_time).total_seconds()
 
-        if time_since_last_detection > AUTO_RESET_TIMEOUT:
+        if time_since_last_detection > self._auto_reset_timeout:
             _LOGGER.info(
                 "Auto-resetting FlipperZero detector - no detection for %d seconds",
                 int(time_since_last_detection)
@@ -596,7 +697,19 @@ class FlipperZeroDetector(BinarySensorEntity):
             self._total_detections = 0
             self._flipper_devices.clear()
             self._color_counts = {"Black": 0, "White": 0, "Orange": 0}
+            self._flipper_events.clear()
             self.async_write_ha_state()
+
+    def _calculate_flipper_intensity(self, now: datetime) -> int:
+        """Calculate current FlipperZero detection intensity."""
+        # Remove events outside the time window
+        cutoff_time = now - timedelta(seconds=self._intensity_window)
+        self._flipper_events = [
+            (ts, addr, color)
+            for ts, addr, color in self._flipper_events
+            if ts > cutoff_time
+        ]
+        return len(self._flipper_events)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -618,11 +731,20 @@ class FlipperZeroDetector(BinarySensorEntity):
                 },
             })
 
+        # Calculate current intensity for display
+        current_intensity = self._calculate_flipper_intensity(datetime.now())
+
         return {
             "flipper_detected": self._attr_is_on,
             "total_detections": self._total_detections,
             "unique_devices": len(self._flipper_devices),
             "last_detection": self._last_detection_time.isoformat() if self._last_detection_time else None,
+            "intensity": {
+                "current": current_intensity,
+                "threshold": self._intensity_threshold,
+                "window_seconds": self._intensity_window,
+                "status": "attacking" if current_intensity >= self._intensity_threshold else "monitoring",
+            },
             "color_statistics": {
                 "black": self._color_counts["Black"],
                 "white": self._color_counts["White"],
