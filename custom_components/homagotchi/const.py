@@ -20,8 +20,8 @@ DEFAULT_FLIPPER_INTENSITY_WINDOW = 20  # 20 second window
 # Detection thresholds for rapid advertising
 # Real BLE spam attacks send packets very rapidly (often 10-100+ per second)
 # Legitimate devices typically advertise every 1-5 seconds
-RAPID_MAC_THRESHOLD = 0.3  # Seconds - devices advertising faster than 3x per second are suspicious
-AIRTAG_RAPID_THRESHOLD = 0.2  # Seconds - AirTag spoofing is even more aggressive
+RAPID_MAC_THRESHOLD = 1.0  # Seconds - devices advertising faster than once per second are suspicious
+AIRTAG_RAPID_THRESHOLD = 0.5  # Seconds - AirTag spoofing is even more aggressive
 
 # ASCII faces for the Pwnagotchi-style display
 FACES = [
