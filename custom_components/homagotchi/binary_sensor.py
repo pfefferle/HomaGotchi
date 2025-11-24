@@ -295,6 +295,16 @@ class BLESpamDetector(BinarySensorEntity):
                         }
                         _LOGGER.warning("Tile tracker spam detected from %s", address)
 
+                # Check nyanBOX detection (by service UUID)
+                elif uuid_upper == SPAM_PATTERNS["nyanbox"]["service_uuid"].upper():
+                    spam_detected = True
+                    spam_type = "nyanbox"
+                    spam_details = {
+                        "service_uuid": uuid_str,
+                        "device": "nyanBOX",
+                    }
+                    _LOGGER.warning("nyanBOX device detected from %s", address)
+
         # Check for FlipperZero BLE spam by Service UUIDs (primary detection method)
         if service_info.service_uuids:
             _LOGGER.debug(

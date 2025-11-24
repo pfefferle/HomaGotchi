@@ -110,5 +110,10 @@ SPAM_PATTERNS = {
         "check_rapid_mac": True,  # AirTag spoofing often uses rapid MAC changes
         "description": "Fake AirTag spoofing",
     },
+    # nyanBOX detection (https://github.com/jbohack/nyanBOX)
+    "nyanbox": {
+        "service_uuid": "6e79616e-424f-582d-7365-727669636521",
+        "description": "nyanBOX BLE device detection",
+    },
 }
 
