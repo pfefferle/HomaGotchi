@@ -13,6 +13,7 @@ This integration is BLE-only and defensive-only:
 
 The integration creates:
 - `BLE Spam Activity` (`binary_sensor`, `problem` class): sustained spam behavior.
+- `Pentest Device Presence` (`binary_sensor`, `presence` class): direct pentest-device signature presence.
 - Dynamic `device_tracker` entities (`Pentest Device <MAC>`): device-style tracking for Flipper/Marauder-like signatures.
 - `Face` (`text`): Pwnagotchi status text entity.
 

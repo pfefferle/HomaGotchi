@@ -32,32 +32,42 @@ from .const import (
     DEFAULT_INTENSITY_WINDOW,
     DOMAIN,
 )
-from .signatures import match_ble_signatures
+from .signatures import SignatureMatch, match_ble_signatures
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class BleSpamActivitySensor(BinarySensorEntity):
-    """General BLE spam/pentest signature activity sensor."""
+class _BaseBleActivitySensor(BinarySensorEntity):
+    """Shared BLE signature activity sensor logic."""
 
     _attr_has_entity_name = True
-    _attr_icon = "mdi:bluetooth-alert"
+    _attr_icon = "mdi:bluetooth-searching"
+    _signature_families: set[str] | None = None
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        """Initialize the BLE spam activity sensor."""
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        *,
+        name: str,
+        unique_id: str,
+        model: str,
+        device_class: BinarySensorDeviceClass,
+        intensity_threshold: int,
+        intensity_window: int,
+        detector_type: str,
+    ) -> None:
+        """Initialize a BLE signature activity sensor."""
         self.hass = hass
         self._entry = entry
-        self._attr_name = "BLE Spam Activity"
-        self._attr_unique_id = f"{DOMAIN}_ble_spam_detector"
+        self._attr_name = name
+        self._attr_unique_id = unique_id
         self._attr_is_on = False
-        self._attr_device_class = BinarySensorDeviceClass.PROBLEM
+        self._attr_device_class = device_class
+        self._detector_type = detector_type
 
-        self._intensity_threshold = entry.options.get(
-            CONF_INTENSITY_THRESHOLD, DEFAULT_INTENSITY_THRESHOLD
-        )
-        self._intensity_window = entry.options.get(
-            CONF_INTENSITY_WINDOW, DEFAULT_INTENSITY_WINDOW
-        )
+        self._intensity_threshold = intensity_threshold
+        self._intensity_window = intensity_window
         self._auto_reset_timeout = entry.options.get(
             CONF_AUTO_RESET_TIMEOUT, DEFAULT_AUTO_RESET_TIMEOUT
         )
@@ -76,7 +86,7 @@ class BleSpamActivitySensor(BinarySensorEntity):
             identifiers={(DOMAIN, entry.entry_id)},
             name="Pwnagotchi BLE Defense",
             manufacturer="Pwnagotchi",
-            model="BLE Signature Detector",
+            model=model,
         )
 
     async def async_added_to_hass(self) -> None:
@@ -127,7 +137,9 @@ class BleSpamActivitySensor(BinarySensorEntity):
         )
         self._last_seen_by_address[address] = now
 
-        matches = match_ble_signatures(service_info, time_since_last_seen)
+        matches = self._filter_matches(
+            match_ble_signatures(service_info, time_since_last_seen)
+        )
         if not matches:
             return
 
@@ -188,6 +200,29 @@ class BleSpamActivitySensor(BinarySensorEntity):
 
         self.async_write_ha_state()
 
+    def _filter_matches(self, matches: list[SignatureMatch]) -> list[SignatureMatch]:
+        """Filter signatures by family when configured."""
+        if self._signature_families is None:
+            return matches
+
+        filtered: list[SignatureMatch] = []
+        for signature_id, details in matches:
+            family = BLE_SIGNATURES.get(signature_id, {}).get("family")
+            if family in self._signature_families:
+                filtered.append((signature_id, details))
+        return filtered
+
+    def _signature_catalog(self) -> dict[str, dict[str, Any]]:
+        """Return signature metadata relevant to this sensor."""
+        if self._signature_families is None:
+            return dict(BLE_SIGNATURES)
+
+        return {
+            signature_id: details
+            for signature_id, details in BLE_SIGNATURES.items()
+            if details.get("family") in self._signature_families
+        }
+
     @callback
     def _check_auto_reset(self, now: datetime) -> None:
         """Automatically reset the sensor after inactivity."""
@@ -244,7 +279,7 @@ class BleSpamActivitySensor(BinarySensorEntity):
 
         return {
             "detection_active": self._attr_is_on,
-            "detector_type": "spam_activity",
+            "detector_type": self._detector_type,
             "scanner_source": "home_assistant_bluetooth",
             "total_signature_matches": self._total_matches,
             "unique_devices": len(self._devices),
@@ -259,9 +294,56 @@ class BleSpamActivitySensor(BinarySensorEntity):
                 "window_seconds": self._intensity_window,
             },
             "signature_counts": dict(self._signature_counts),
-            "signature_catalog": dict(BLE_SIGNATURES),
+            "signature_catalog": self._signature_catalog(),
             "devices": devices,
         }
+
+
+class BleSpamActivitySensor(_BaseBleActivitySensor):
+    """General BLE spam/pentest signature activity sensor."""
+
+    _attr_icon = "mdi:bluetooth-alert"
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the BLE spam activity sensor."""
+        super().__init__(
+            hass,
+            entry,
+            name="BLE Spam Activity",
+            unique_id=f"{DOMAIN}_ble_spam_detector",
+            model="BLE Signature Detector",
+            device_class=BinarySensorDeviceClass.PROBLEM,
+            intensity_threshold=entry.options.get(
+                CONF_INTENSITY_THRESHOLD, DEFAULT_INTENSITY_THRESHOLD
+            ),
+            intensity_window=entry.options.get(
+                CONF_INTENSITY_WINDOW, DEFAULT_INTENSITY_WINDOW
+            ),
+            detector_type="spam_activity",
+        )
+
+
+class BlePentestPresenceSensor(_BaseBleActivitySensor):
+    """Presence sensor for concrete pentest-device signatures."""
+
+    _attr_icon = "mdi:access-point"
+    _signature_families = {"flipper_zero"}
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the pentest presence sensor."""
+        super().__init__(
+            hass,
+            entry,
+            name="Pentest Device Presence",
+            unique_id=f"{DOMAIN}_pentest_presence",
+            model="BLE Presence Detector",
+            device_class=BinarySensorDeviceClass.PRESENCE,
+            intensity_threshold=1,
+            intensity_window=entry.options.get(
+                CONF_INTENSITY_WINDOW, DEFAULT_INTENSITY_WINDOW
+            ),
+            detector_type="presence",
+        )
 
 
 async def async_setup_entry(
@@ -270,5 +352,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up BLE binary sensors from a config entry."""
-    async_add_entities([BleSpamActivitySensor(hass, entry)])
-    _LOGGER.info("Configured BLE defensive signature spam detector")
+    async_add_entities(
+        [
+            BleSpamActivitySensor(hass, entry),
+            BlePentestPresenceSensor(hass, entry),
+        ]
+    )
+    _LOGGER.info("Configured BLE defensive signature sensors")

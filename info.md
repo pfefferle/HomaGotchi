@@ -11,8 +11,9 @@ Defensive BLE signature monitoring for Home Assistant.
 ## Sensors
 
 1. `BLE Spam Activity` (`problem` class)
-2. `Pentest Device <MAC>` (`device_tracker`, Flipper-family signatures)
-3. `Face` (`text`)
+2. `Pentest Device Presence` (`presence` class, Flipper-family signatures)
+3. `Pentest Device <MAC>` (`device_tracker`, Flipper-family signatures)
+4. `Face` (`text`)
 
 Spam and tracker entities support threshold/timeout-based behavior.
 
