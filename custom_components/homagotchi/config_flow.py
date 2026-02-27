@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.config_entries import HANDLERS, ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 import voluptuous as vol
 
@@ -19,7 +19,7 @@ from .const import (
 )
 
 
-class HomaGotchiConfigFlow(ConfigFlow, domain=DOMAIN):
+class HomaGotchiConfigFlow(ConfigFlow):
     """Handle a config flow for HomaGotchi."""
 
     VERSION = 1
@@ -86,3 +86,8 @@ class HomaGotchiOptionsFlow(OptionsFlow):
                 }
             ),
         )
+
+
+# Compatibility registration for Home Assistant versions with different
+# ConfigFlow handler registration behavior.
+HANDLERS.register(DOMAIN)(HomaGotchiConfigFlow)
