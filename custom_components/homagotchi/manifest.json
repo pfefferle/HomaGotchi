@@ -1,10 +1,9 @@
 {
   "domain": "homagotchi",
   "name": "HomaGotchi",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "documentation": "https://github.com/pfefferle/homagotchi",
   "issue_tracker": "https://github.com/pfefferle/homagotchi/issues",
-  "requirements": ["bleak>=0.20.2"],
   "dependencies": ["bluetooth"],
   "codeowners": ["@pfefferle"],
   "config_flow": true,

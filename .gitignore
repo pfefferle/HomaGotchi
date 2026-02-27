@@ -3,3 +3,7 @@ __pycache__
 venv
 test_env
 *.md
+!README.md
+!CHANGELOG.md
+!info.md
+!AGENTS.md

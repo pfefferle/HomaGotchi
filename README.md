@@ -1,150 +1,86 @@
-# 🐬 HomaGotchi
+# HomaGotchi
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/custom-components/hacs)
-[![GitHub Release](https://img.shields.io/github/release/pfefferle/homagotchi.svg)](https://github.com/pfefferle/homagotchi/releases)
-[![License](https://img.shields.io/github/license/pfefferle/homagotchi.svg)](LICENSE)
+Defensive BLE signature monitoring for Home Assistant.
 
-A Pwnagotchi-inspired Home Assistant integration with BLE spam detection and FlipperZero monitoring.
+## Scope
 
-## Features
+This integration is BLE-only and defensive-only:
+- Uses the Home Assistant Bluetooth network (`bluetooth` integration scanners/proxies).
+- Detects BLE signatures commonly associated with pentest/spoofing tooling.
+- Focuses on passive BLE observation and alerting.
 
-🎭 **ASCII Face Display** - Animated Pwnagotchi-style faces that change every 30 seconds
-🚨 **BLE Spam Detection** - Detects various Bluetooth Low Energy spam attacks
-🐬 **FlipperZero Detection** - Specialized detector for FlipperZero devices and ESP32 Marauder attacks
-🛡️ **Smart Filtering** - Distinguishes between legitimate devices and actual attacks
+## Entities
 
-### Detected Attack Types
+The integration creates:
+- `BLE Spam Activity` (`binary_sensor`, `problem` class): sustained spam behavior.
+- Dynamic `device_tracker` entities (`Pentest Device <MAC>`): device-style tracking for Flipper/Marauder-like signatures.
+- `Face` (`text`): Pwnagotchi status text entity.
 
-- **FlipperZero/ESP32 Marauder** - Via Service UUIDs (00003081/82/83) and manufacturer data patterns
-- **Apple Continuity Spam** - SourApple attacks with rapid MAC changes
-- **Samsung BLE Spam** - SmartTag spoofing attacks
-- **Google Fast Pair Spam** - Fake pairing requests
-- **Microsoft Swift Pair** - Windows device spam
-- **AirTag Spoofing** - Fake FindMy broadcasts
-- **Tile Tracker Spam** - Fake Tile devices
+Spam and tracker activity auto-reset after the configured inactivity timeout.
+
+## Signatures Detected
+
+- FlipperZero service UUID signatures (`00003081/82/83` variants)
+- FlipperZero/ESP32 Marauder payload patterns (`0x8130`, `0x8230`, `0x8330`)
+- AppleJuice payload signatures (`07 19 07 .. 20 75 aa 30`)
+- Marauder Apple popup payload signatures (`07 0f 00 .. ac 90 85 75 94 65`)
+- Apple setup popup payload signatures (`04 04 2a .. 0f 05 c1`)
+- SourApple payload signatures (`0f 05 c0/c1 .. 00 00 10`)
+- Apple continuity custom-crash signatures (`0f 05 .. .. .. .. .. 00 00 10`)
+- Apple Continuity spoofing signatures
+- AirTag/Find My spoofing signatures
+- Google Fast Pair payload-frame signatures
+- Google Fast Pair spoofing signatures
+- Microsoft Swift Pair payload signatures
+- Microsoft Swift Pair spoofing signatures
+- Samsung watch-pair payload signatures
+- Samsung buds EasySetup payload signatures
+- Samsung SmartTag spoofing signatures
+- Tile spoofing signatures
+
+## Project Signature Check
+
+Checked projects and whether they expose concrete BLE signatures usable for detection:
+- `n0xa/m5stick-nemo` (`https://github.com/n0xa/m5stick-nemo`): yes, explicit AppleJuice/Apple popup payload byte patterns.
+- `BruceDevices/firmware` (`https://github.com/BruceDevices/firmware`): yes, explicit AppleJuice, SourApple, Swift Pair, Samsung, and Fast Pair payload patterns.
+- `justcallmekoko/ESP32Marauder` (`https://github.com/justcallmekoko/ESP32Marauder`): yes, concrete BLE payload shapes for SourApple/Swift Pair/Samsung/Fast Pair and Marauder-style Apple popup payloads.
+- `jaylikesbunda/Ghost_ESP` (`https://github.com/jaylikesbunda/Ghost_ESP`): yes, explicit BLE packet builders for Apple Continuity (including custom-crash shape), Swift Pair, Samsung EasySetup (watch + buds), and Fast Pair.
+- `geo-tp/ESP32-Bus-Pirate` (`https://github.com/geo-tp/ESP32-Bus-Pirate`): no BLE spam payload generator signatures found; Bluetooth code is focused on scan/sniff/pair/HID workflows.
+- `0ct0sec/M5PORKCHOP` (`https://github.com/0ct0sec/M5PORKCHOP`): no clear BLE spam payload signatures found in current source tree.
+- `7h30th3r0n3/Evil-M5Project` (`https://github.com/7h30th3r0n3/Evil-M5Project`): BLE attack features are present, but stable signature bytes were not reliably extractable from the large monolithic sources during this pass.
+
+## Configuration Options
+
+- `intensity_threshold`: Event count required for the general BLE detector
+- `intensity_window`: Rolling seconds window for general BLE detector
+- `auto_reset_timeout`: Seconds of inactivity before sensor resets to `off`
 
 ## Installation
 
-### HACS (Recommended)
+### HACS
 
-1. Open HACS in Home Assistant
-2. Click on "Integrations"
-3. Click the three dots in the top right corner
-4. Select "Custom repositories"
-5. Add `https://github.com/pfefferle/homagotchi` as a repository with category "Integration"
-6. Click "Install"
-7. Restart Home Assistant
-8. Add the integration via Settings → Devices & Services → Add Integration → HomaGotchi
+1. Open HACS → Integrations.
+2. Add custom repo: `https://github.com/pfefferle/homagotchi`.
+3. Install integration.
+4. Restart Home Assistant.
+5. Add `HomaGotchi` from Settings → Devices & Services.
 
-### Manual Installation
+### Manual
 
-1. Copy the `custom_components/homagotchi` folder to your Home Assistant `custom_components` directory
-2. Restart Home Assistant
-3. Add the integration via Settings → Devices & Services → Add Integration → HomaGotchi
+1. Copy `custom_components/homagotchi/` into your Home Assistant `custom_components/`.
+2. Restart Home Assistant.
+3. Add `HomaGotchi` from Settings → Devices & Services.
 
-## Usage
+## How Detection Works
 
-Once installed, HomaGotchi provides:
+1. Registers a callback via Home Assistant Bluetooth APIs.
+2. Inspects manufacturer data, service UUIDs, and service markers.
+3. Applies defensive heuristics (rapid advertising + signature matching).
+4. Triggers spam state once threshold is met, and tracks matching Flipper-family devices.
+5. Exposes rich attributes for automations and incident review.
 
-### Entities
+## Notes
 
-- **Text Sensor**: `text.homagotchi_face` - Displays ASCII face (changes every 30s)
-- **Binary Sensor**: `binary_sensor.ble_spam_detected` - General BLE spam detector
-- **Binary Sensor**: `binary_sensor.flipper_zero_detected` - FlipperZero-specific detector
-
-### Services
-
-- `homagotchi.set_face` - Manually set the ASCII face
-
-### Attributes
-
-Both binary sensors provide rich attributes including:
-- Detection counts and types
-- Device information (MAC, RSSI, name)
-- Spam pattern details
-- Threat level assessment (for FlipperZero)
-- Color identification (Black/White/Orange FlipperZero)
-
-## Detection Methods
-
-### FlipperZero Detection
-
-Based on [Wall of Flippers](https://github.com/K3YOMI/Wall-of-Flippers) detection methods:
-
-**Primary Method**: Service UUIDs
-- `00003081-0000-1000-8000-00805F9B34FB` (Black)
-- `00003082-0000-1000-8000-00805F9B34FB` (White)
-- `00003083-0000-1000-8000-00805F9B34FB` (Transparent/Orange)
-
-**Fallback Method**: Manufacturer data patterns
-- `0x8130`, `0x8230`, `0x8330` (ESP32 Marauder)
-
-### Smart Filtering
-
-HomaGotchi distinguishes between legitimate devices and attacks by checking:
-- Rapid MAC address changes (< 1 second = attack)
-- Device names (legitimate vs. spoofed)
-- Data pattern anomalies
-- Advertisement frequency
-
-Your HomePod, iPhone, Apple Watch, and Samsung TV won't trigger false alarms! ✅
-
-## Development
-
-### Quick Start (Local Testing)
-
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-2. Run Home Assistant with the test environment:
-   ```bash
-   ./run_dev.sh
-   ```
-
-3. The test environment loads your custom integration from `custom_components/homagotchi/`
-
-### Project Structure
-
-```
-homagotchi/
-├── custom_components/homagotchi/
-│   ├── __init__.py          # Integration setup
-│   ├── binary_sensor.py     # BLE spam detectors
-│   ├── config_flow.py       # Configuration UI
-│   ├── const.py             # Constants and patterns
-│   ├── manifest.json        # Integration metadata
-│   ├── sensor.py            # Text sensor (unused)
-│   ├── strings.json         # UI strings
-│   ├── text.py              # ASCII face entity
-│   └── translations/        # Localization
-├── hacs.json                # HACS configuration
-├── README.md                # This file
-└── test_env/                # Development environment
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Credits
-
-- Detection methods based on [Wall of Flippers](https://github.com/K3YOMI/Wall-of-Flippers) by @K3YOMI
-- Inspired by [Pwnagotchi](https://pwnagotchi.ai/)
-
-## Support
-
-If you find this integration useful, consider:
-- ⭐ Starring the repository
-- 🐛 Reporting issues
-- 💡 Suggesting features
-- 🔀 Contributing code
-
----
-
-**Note**: This integration is for educational and security awareness purposes. Always respect privacy and local laws when monitoring Bluetooth traffic.
+- This project is intended for defensive awareness and monitoring.
+- BLE signature detection can produce false positives depending on your environment.
+- Tune thresholds for your location and device density.

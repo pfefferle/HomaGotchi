@@ -1,21 +1,23 @@
-from homeassistant.config_entries import ConfigFlow, ConfigEntry, OptionsFlow
-from homeassistant.core import callback
-import voluptuous as vol
+"""Config flow for HomaGotchi."""
+
+from __future__ import annotations
+
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
+from homeassistant.core import callback
+import voluptuous as vol
+
 from .const import (
-    DOMAIN,
+    CONF_AUTO_RESET_TIMEOUT,
     CONF_INTENSITY_THRESHOLD,
     CONF_INTENSITY_WINDOW,
-    CONF_AUTO_RESET_TIMEOUT,
-    CONF_FLIPPER_INTENSITY_THRESHOLD,
-    CONF_FLIPPER_INTENSITY_WINDOW,
+    DEFAULT_AUTO_RESET_TIMEOUT,
     DEFAULT_INTENSITY_THRESHOLD,
     DEFAULT_INTENSITY_WINDOW,
-    DEFAULT_AUTO_RESET_TIMEOUT,
-    DEFAULT_FLIPPER_INTENSITY_THRESHOLD,
-    DEFAULT_FLIPPER_INTENSITY_WINDOW,
+    DOMAIN,
 )
+
 
 class HomaGotchiConfigFlow(ConfigFlow):
     """Handle a config flow for HomaGotchi."""
@@ -29,7 +31,7 @@ class HomaGotchiConfigFlow(ConfigFlow):
         """Get the options flow for this handler."""
         return HomaGotchiOptionsFlow(config_entry)
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(self, user_input: dict[str, Any] | None = None):
         """Handle the initial step."""
         if user_input is not None:
             return self.async_create_entry(
@@ -39,10 +41,9 @@ class HomaGotchiConfigFlow(ConfigFlow):
                     CONF_INTENSITY_THRESHOLD: DEFAULT_INTENSITY_THRESHOLD,
                     CONF_INTENSITY_WINDOW: DEFAULT_INTENSITY_WINDOW,
                     CONF_AUTO_RESET_TIMEOUT: DEFAULT_AUTO_RESET_TIMEOUT,
-                    CONF_FLIPPER_INTENSITY_THRESHOLD: DEFAULT_FLIPPER_INTENSITY_THRESHOLD,
-                    CONF_FLIPPER_INTENSITY_WINDOW: DEFAULT_FLIPPER_INTENSITY_WINDOW,
-                }
+                },
             )
+
         return self.async_show_form(step_id="user")
 
 
@@ -54,7 +55,7 @@ class HomaGotchiOptionsFlow(OptionsFlow):
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
-        """Manage the options."""
+        """Manage options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
@@ -65,33 +66,24 @@ class HomaGotchiOptionsFlow(OptionsFlow):
                     vol.Optional(
                         CONF_INTENSITY_THRESHOLD,
                         default=self.config_entry.options.get(
-                            CONF_INTENSITY_THRESHOLD, DEFAULT_INTENSITY_THRESHOLD
+                            CONF_INTENSITY_THRESHOLD,
+                            DEFAULT_INTENSITY_THRESHOLD,
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
                     vol.Optional(
                         CONF_INTENSITY_WINDOW,
                         default=self.config_entry.options.get(
-                            CONF_INTENSITY_WINDOW, DEFAULT_INTENSITY_WINDOW
+                            CONF_INTENSITY_WINDOW,
+                            DEFAULT_INTENSITY_WINDOW,
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
                     vol.Optional(
                         CONF_AUTO_RESET_TIMEOUT,
                         default=self.config_entry.options.get(
-                            CONF_AUTO_RESET_TIMEOUT, DEFAULT_AUTO_RESET_TIMEOUT
+                            CONF_AUTO_RESET_TIMEOUT,
+                            DEFAULT_AUTO_RESET_TIMEOUT,
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
-                    vol.Optional(
-                        CONF_FLIPPER_INTENSITY_THRESHOLD,
-                        default=self.config_entry.options.get(
-                            CONF_FLIPPER_INTENSITY_THRESHOLD, DEFAULT_FLIPPER_INTENSITY_THRESHOLD
-                        ),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
-                    vol.Optional(
-                        CONF_FLIPPER_INTENSITY_WINDOW,
-                        default=self.config_entry.options.get(
-                            CONF_FLIPPER_INTENSITY_WINDOW, DEFAULT_FLIPPER_INTENSITY_WINDOW
-                        ),
-                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=120)),
                 }
             ),
         )

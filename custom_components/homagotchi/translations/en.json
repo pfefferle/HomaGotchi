@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Set up HomaGotchi",
-        "description": "HomaGotchi will monitor Bluetooth Low Energy (BLE) spam attacks and FlipperZero devices."
+        "description": "Defensive BLE monitoring using Home Assistant Bluetooth scanners."
       }
     }
   },
@@ -12,45 +12,17 @@
     "step": {
       "init": {
         "title": "HomaGotchi Options",
-        "description": "Configure detection sensitivity and auto-reset behavior",
+        "description": "Configure BLE signature spam detection sensitivity",
         "data": {
-          "intensity_threshold": "BLE Spam Intensity Threshold (events required)",
-          "intensity_window": "BLE Spam Detection Window (seconds)",
-          "auto_reset_timeout": "Auto-Reset Timeout (seconds)",
-          "flipper_intensity_threshold": "FlipperZero Intensity Threshold (events required)",
-          "flipper_intensity_window": "FlipperZero Detection Window (seconds)"
+          "intensity_threshold": "BLE Signature Threshold (events required)",
+          "intensity_window": "BLE Signature Window (seconds)",
+          "auto_reset_timeout": "Auto-Reset Timeout (seconds)"
         },
         "data_description": {
-          "intensity_threshold": "Number of suspicious BLE events required within the time window to trigger detection",
-          "intensity_window": "Time window in seconds for counting suspicious BLE events",
-          "auto_reset_timeout": "Time in seconds before sensors auto-reset if no new detections occur",
-          "flipper_intensity_threshold": "Number of FlipperZero detections required within the time window to trigger alert",
-          "flipper_intensity_window": "Time window in seconds for counting FlipperZero detections"
+          "intensity_threshold": "Number of suspicious BLE signature matches required to trigger spam activity",
+          "intensity_window": "Rolling time window in seconds for BLE signature counting",
+          "auto_reset_timeout": "Time in seconds before spam and device states auto-reset if no new detections occur"
         }
-      }
-    }
-  },
-  "services": {
-    "set_face": {
-      "name": "Set Face",
-      "description": "Set the Pwnagotchi face to a specific expression",
-      "fields": {
-        "face_index": {
-          "name": "Face Index",
-          "description": "Index of the face expression (0-20)"
-        }
-      }
-    }
-  },
-  "entity": {
-    "sensor": {
-      "flipper_zero_detected": {
-        "name": "Flipper Zero Detected",
-        "state": "Detected Flipper Zeros"
-      },
-      "ble_spam_detector": {
-        "name": "BLE Spam Detector",
-        "state": "BLE Spam Detection"
       }
     }
   }
