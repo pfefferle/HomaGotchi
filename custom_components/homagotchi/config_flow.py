@@ -19,11 +19,10 @@ from .const import (
 )
 
 
-class HomaGotchiConfigFlow(ConfigFlow):
+class HomaGotchiConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for HomaGotchi."""
 
     VERSION = 1
-    DOMAIN = DOMAIN
 
     @staticmethod
     @callback
