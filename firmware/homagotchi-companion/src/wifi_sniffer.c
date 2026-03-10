@@ -347,14 +347,31 @@ bool wifi_sniffer_has_alert(void)
                  (s_probe_requests >= HG_PROBE_FLOOD_THRESHOLD);
     portEXIT_CRITICAL(&s_counter_mux);
 
-    /* Also check beacon spam (not under spinlock, but single-writer is ok) */
     if (s_beacon_mac_count >= HG_BEACON_SPAM_THRESHOLD) {
         alert = true;
     }
     return alert;
 }
 
-wifi_report_t wifi_sniffer_collect(void)
+uint16_t wifi_sniffer_peek_flags(void)
+{
+    portENTER_CRITICAL(&s_counter_mux);
+    uint16_t flags = s_flags;
+    if ((s_deauth + s_disassoc) >= HG_ATTACK_THRESHOLD) {
+        flags |= HG_FLAG_DEAUTH;
+    }
+    if (s_probe_requests >= HG_PROBE_FLOOD_THRESHOLD) {
+        flags |= HG_FLAG_PROBE_FLOOD;
+    }
+    portEXIT_CRITICAL(&s_counter_mux);
+
+    if (s_beacon_mac_count >= HG_BEACON_SPAM_THRESHOLD) {
+        flags |= HG_FLAG_BEACON_SPAM;
+    }
+    return flags;
+}
+
+wifi_report_t wifi_sniffer_collect(bool full_reset)
 {
     wifi_report_t r;
 
@@ -381,16 +398,18 @@ wifi_report_t wifi_sniffer_collect(void)
     s_flags          = 0;
     portEXIT_CRITICAL(&s_counter_mux);
 
-    /* Reset beacon MAC tracker each interval */
-    s_beacon_mac_count = 0;
-    memset(s_beacon_macs, 0, sizeof(s_beacon_macs));
+    if (full_reset) {
+        /* Reset beacon MAC tracker on the regular interval */
+        s_beacon_mac_count = 0;
+        memset(s_beacon_macs, 0, sizeof(s_beacon_macs));
 
-    /* Periodically clear the AP table */
-    s_collect_count++;
-    if (s_collect_count >= 30) {
-        s_collect_count = 0;
-        memset(s_ap_table, 0, sizeof(s_ap_table));
-        ESP_LOGI(TAG, "AP table reset (periodic)");
+        /* Periodically clear the AP table */
+        s_collect_count++;
+        if (s_collect_count >= 30) {
+            s_collect_count = 0;
+            memset(s_ap_table, 0, sizeof(s_ap_table));
+            ESP_LOGI(TAG, "AP table reset (periodic)");
+        }
     }
 
     return r;

@@ -507,12 +507,6 @@ class CompanionWifiSensor(BinarySensorEntity):
         if not name.startswith(WIFI_MONITOR_NAME_PREFIX):
             return
 
-        _LOGGER.debug(
-            "Gotchi ad from %s: service_data keys=%s",
-            service_info.address,
-            list((service_info.service_data or {}).keys()),
-        )
-
         service_data = service_info.service_data or {}
         raw: bytes | None = None
         for uuid_str, payload in service_data.items():
@@ -521,12 +515,10 @@ class CompanionWifiSensor(BinarySensorEntity):
                 break
 
         if raw is None:
-            _LOGGER.debug("No BTHome service data in Gotchi ad")
             return
 
         parsed = parse_bthome_v2(raw)
         if parsed is None:
-            _LOGGER.debug("Failed to parse BTHome payload")
             return
 
         address = service_info.address or "unknown"

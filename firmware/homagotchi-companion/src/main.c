@@ -23,7 +23,9 @@ static void monitor_task(void *arg)
     (void)arg;
 
     TickType_t last_report = xTaskGetTickCount();
+    TickType_t last_urgent = 0;
     TickType_t last_hop    = last_report;
+    uint16_t   prev_flags  = 0;
 
     /* Initial broadcast with zeroed report */
     wifi_report_t empty = {0};
@@ -39,19 +41,33 @@ static void monitor_task(void *arg)
 
         bool interval_elapsed =
             (now - last_report) * portTICK_PERIOD_MS >= HG_REPORT_INTERVAL_MS;
-        bool urgent = wifi_sniffer_has_alert();
+
+        /*
+         * Urgent broadcast: only when a NEW flag appears that wasn't in the
+         * previous report, and at most once per second to avoid flooding.
+         */
+        bool urgent = false;
+        if (!interval_elapsed && wifi_sniffer_has_alert()) {
+            uint16_t new_flags = wifi_sniffer_peek_flags();
+            uint16_t fresh = new_flags & ~prev_flags;
+            if (fresh && (now - last_urgent) * portTICK_PERIOD_MS >= 1000) {
+                urgent = true;
+                last_urgent = now;
+            }
+        }
 
         if (interval_elapsed || urgent) {
             last_report = now;
 
-            wifi_report_t r = wifi_sniffer_collect();
+            wifi_report_t r = wifi_sniffer_collect(interval_elapsed);
+            prev_flags = r.flags;
             bthome_broadcast(&r);
 
             if (r.flags) {
                 ESP_LOGW(TAG,
                     "deauth=%u disassoc=%u probes=%u flags=0x%04X%s",
                     r.deauth, r.disassoc, r.probe_requests, r.flags,
-                    urgent && !interval_elapsed ? " [URGENT]" : "");
+                    urgent ? " [URGENT]" : "");
             }
         }
 
