@@ -28,9 +28,6 @@ from .bthome import (
 )
 from .const import (
     BLE_SIGNATURES,
-    BOOL_IDX_DEAUTH,
-    BOOL_IDX_EVIL_TWIN,
-    BOOL_IDX_PWNAGOTCHI,
     CONF_AUTO_RESET_TIMEOUT,
     CONF_INTENSITY_THRESHOLD,
     CONF_INTENSITY_WINDOW,
@@ -40,6 +37,13 @@ from .const import (
     DEFAULT_INTENSITY_WINDOW,
     DEFAULT_WIFI_DEAUTH_THRESHOLD,
     DOMAIN,
+    FLAG_BEACON_SPAM,
+    FLAG_DEAUTH,
+    FLAG_EVIL_TWIN,
+    FLAG_KARMA,
+    FLAG_PINEAPPLE,
+    FLAG_PROBE_FLOOD,
+    FLAG_PWNAGOTCHI,
     WIFI_MONITOR_NAME_PREFIX,
 )
 from .signatures import SignatureMatch, match_ble_signatures
@@ -411,16 +415,17 @@ class BlePentestPresenceSensor(_BaseBleActivitySensor):
 class CompanionWifiSensor(BinarySensorEntity):
     """Base class for WiFi sensors fed by BTHome companion devices.
 
-    The companion firmware sends three ordered generic_boolean objects:
-      [0] deauth attack active
-      [1] pwnagotchi detected
-      [2] evil twin detected
-    Subclasses set ``_bool_index`` to select which boolean they represent.
+    The companion firmware sends four ordered count_u16 objects:
+      [0] deauth frame count
+      [1] disassoc frame count
+      [2] probe request count
+      [3] flags bitmask (HG_FLAG_* bits from config.h / const.py)
+    Subclasses set ``_flag_mask`` to select which flag bit(s) they monitor.
     """
 
     _attr_has_entity_name = True
     _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _bool_index: int = 0
+    _flag_mask: int = 0
     _unrecorded_attributes = frozenset({
         "companion_devices",
     })
@@ -502,6 +507,12 @@ class CompanionWifiSensor(BinarySensorEntity):
         if not name.startswith(WIFI_MONITOR_NAME_PREFIX):
             return
 
+        _LOGGER.debug(
+            "Gotchi ad from %s: service_data keys=%s",
+            service_info.address,
+            list((service_info.service_data or {}).keys()),
+        )
+
         service_data = service_info.service_data or {}
         raw: bytes | None = None
         for uuid_str, payload in service_data.items():
@@ -510,10 +521,12 @@ class CompanionWifiSensor(BinarySensorEntity):
                 break
 
         if raw is None:
+            _LOGGER.debug("No BTHome service data in Gotchi ad")
             return
 
         parsed = parse_bthome_v2(raw)
         if parsed is None:
+            _LOGGER.debug("Failed to parse BTHome payload")
             return
 
         address = service_info.address or "unknown"
@@ -522,10 +535,11 @@ class CompanionWifiSensor(BinarySensorEntity):
             return
 
         counts = parsed.get_all("count")
-        bools = parsed.get_all("generic_boolean")
         deauth = counts[0] if len(counts) > 0 else 0
         disassoc = counts[1] if len(counts) > 1 else 0
-        flag = bools[self._bool_index] if len(bools) > self._bool_index else 0
+        probes = counts[2] if len(counts) > 2 else 0
+        flags = counts[3] if len(counts) > 3 else 0
+        flag = bool(flags & self._flag_mask)
 
         now = datetime.now()
 
@@ -540,6 +554,8 @@ class CompanionWifiSensor(BinarySensorEntity):
         device["packet_id"] = parsed.packet_id
         device["last_deauth"] = deauth
         device["last_disassoc"] = disassoc
+        device["last_probes"] = probes
+        device["last_flags"] = flags
 
         self._total_deauth += deauth
         self._total_disassoc += disassoc
@@ -600,6 +616,8 @@ class CompanionWifiSensor(BinarySensorEntity):
                 "last_seen": d["last_seen"].isoformat() if d.get("last_seen") else None,
                 "last_deauth": d.get("last_deauth", 0),
                 "last_disassoc": d.get("last_disassoc", 0),
+                "last_probes": d.get("last_probes", 0),
+                "last_flags": d.get("last_flags", 0),
             }
             for d in self._companion_devices.values()
         ]
@@ -622,7 +640,7 @@ class CompanionWifiSensor(BinarySensorEntity):
 class WifiDeauthSensor(CompanionWifiSensor):
     """WiFi deauthentication / disassociation attack sensor."""
 
-    _bool_index = BOOL_IDX_DEAUTH
+    _flag_mask = FLAG_DEAUTH
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the deauth sensor."""
@@ -632,10 +650,6 @@ class WifiDeauthSensor(CompanionWifiSensor):
             unique_id=f"{DOMAIN}_deauth",
             icon="mdi:wifi-alert",
         )
-
-    def _evaluate(self, flag: int, deauth: int, disassoc: int) -> bool:
-        """Trigger on flag or when frame count exceeds threshold."""
-        return bool(flag) or (deauth + disassoc) >= self._deauth_threshold
 
     def _build_summary(self) -> str:
         if not self._attr_is_on:
@@ -652,7 +666,7 @@ class WifiDeauthSensor(CompanionWifiSensor):
 class WifiPwnagotchiSensor(CompanionWifiSensor):
     """Pwnagotchi presence sensor via WiFi beacon analysis."""
 
-    _bool_index = BOOL_IDX_PWNAGOTCHI
+    _flag_mask = FLAG_PWNAGOTCHI
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the pwnagotchi sensor."""
@@ -673,7 +687,7 @@ class WifiPwnagotchiSensor(CompanionWifiSensor):
 class WifiEvilTwinSensor(CompanionWifiSensor):
     """Evil twin AP detection sensor."""
 
-    _bool_index = BOOL_IDX_EVIL_TWIN
+    _flag_mask = FLAG_EVIL_TWIN
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the evil twin sensor."""
@@ -691,6 +705,90 @@ class WifiEvilTwinSensor(CompanionWifiSensor):
         return f"Duplicate SSID from different BSSID (via {', '.join(reporters[:2])})"
 
 
+class WifiBeaconSpamSensor(CompanionWifiSensor):
+    """Beacon spam / fake AP flood detection sensor."""
+
+    _flag_mask = FLAG_BEACON_SPAM
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the beacon spam sensor."""
+        super().__init__(
+            hass, entry,
+            name="Beacon Spam Detected",
+            unique_id=f"{DOMAIN}_beacon_spam",
+            icon="mdi:wifi-strength-1-alert",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No beacon spam"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"Beacon flood from many unique MACs (via {', '.join(reporters[:2])})"
+
+
+class WifiProbeFloodSensor(CompanionWifiSensor):
+    """Probe request flood detection sensor."""
+
+    _flag_mask = FLAG_PROBE_FLOOD
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the probe flood sensor."""
+        super().__init__(
+            hass, entry,
+            name="Probe Flood Detected",
+            unique_id=f"{DOMAIN}_probe_flood",
+            icon="mdi:radar",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No probe flood"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"High probe request rate detected (via {', '.join(reporters[:2])})"
+
+
+class WifiKarmaSensor(CompanionWifiSensor):
+    """Karma / multi-SSID device detection sensor."""
+
+    _flag_mask = FLAG_KARMA
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the karma sensor."""
+        super().__init__(
+            hass, entry,
+            name="Karma Attack Detected",
+            unique_id=f"{DOMAIN}_karma",
+            icon="mdi:access-point-network",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No karma devices"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"Single BSSID advertising multiple SSIDs (via {', '.join(reporters[:2])})"
+
+
+class WifiPineappleSensor(CompanionWifiSensor):
+    """WiFi Pineapple / suspicious device OUI detection sensor."""
+
+    _flag_mask = FLAG_PINEAPPLE
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the pineapple sensor."""
+        super().__init__(
+            hass, entry,
+            name="Pineapple Detected",
+            unique_id=f"{DOMAIN}_pineapple",
+            icon="mdi:fruit-pineapple",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No pineapple devices"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"Suspicious OUI (Hak5/Alfa) in beacon (via {', '.join(reporters[:2])})"
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -704,6 +802,10 @@ async def async_setup_entry(
             WifiDeauthSensor(hass, entry),
             WifiPwnagotchiSensor(hass, entry),
             WifiEvilTwinSensor(hass, entry),
+            WifiBeaconSpamSensor(hass, entry),
+            WifiProbeFloodSensor(hass, entry),
+            WifiKarmaSensor(hass, entry),
+            WifiPineappleSensor(hass, entry),
         ]
     )
     _LOGGER.info("Configured defensive signature sensors")

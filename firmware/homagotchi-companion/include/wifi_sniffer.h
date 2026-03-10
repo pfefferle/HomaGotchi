@@ -12,8 +12,8 @@
 typedef struct {
     uint16_t deauth;
     uint16_t disassoc;
-    bool     pwnagotchi;
-    bool     evil_twin;
+    uint16_t probe_requests;
+    uint16_t flags;  /* bitmask of HG_FLAG_* from config.h */
 } wifi_report_t;
 
 /** Initialise WiFi in promiscuous mode on channel 1. */
@@ -27,3 +27,9 @@ void wifi_sniffer_hop(void);
  * Thread-safe: uses a spinlock to synchronise with the promiscuous callback.
  */
 wifi_report_t wifi_sniffer_collect(void);
+
+/**
+ * Check whether any attack flags have been set since last collect.
+ * Non-destructive read — does not reset counters.
+ */
+bool wifi_sniffer_has_alert(void);

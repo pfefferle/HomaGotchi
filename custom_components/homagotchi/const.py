@@ -83,10 +83,15 @@ WIFI_MONITOR_NAME_PREFIX = "Gotchi"
 CONF_WIFI_DEAUTH_THRESHOLD = "wifi_deauth_threshold"
 DEFAULT_WIFI_DEAUTH_THRESHOLD = 5
 
-# BTHome boolean object indices (must match firmware payload order in bthome.c)
-BOOL_IDX_DEAUTH = 0
-BOOL_IDX_PWNAGOTCHI = 1
-BOOL_IDX_EVIL_TWIN = 2
+# BTHome flags bitmask (must match HG_FLAG_* in firmware config.h)
+# The 4th count_u16 in the BTHome payload is a bitmask of these flags.
+FLAG_DEAUTH = 1 << 0
+FLAG_PWNAGOTCHI = 1 << 1
+FLAG_EVIL_TWIN = 1 << 2
+FLAG_BEACON_SPAM = 1 << 3
+FLAG_PROBE_FLOOD = 1 << 4
+FLAG_KARMA = 1 << 5
+FLAG_PINEAPPLE = 1 << 6
 
 # Human-friendly descriptions used in state attributes
 BLE_SIGNATURES = {

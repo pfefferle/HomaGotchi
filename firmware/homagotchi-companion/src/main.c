@@ -1,8 +1,8 @@
 /**
  * HomaGotchi Companion – entry point
  *
- * Passive WiFi monitor that reports deauth attacks, pwnagotchi beacons,
- * and evil twin APs via BTHome v2 BLE advertisements.
+ * Passive WiFi monitor that reports attacks via BTHome v2 BLE advertisements.
+ * Broadcasts immediately when an attack is detected, otherwise every 10 s.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -37,17 +37,21 @@ static void monitor_task(void *arg)
             wifi_sniffer_hop();
         }
 
-        if ((now - last_report) * portTICK_PERIOD_MS >= HG_REPORT_INTERVAL_MS) {
+        bool interval_elapsed =
+            (now - last_report) * portTICK_PERIOD_MS >= HG_REPORT_INTERVAL_MS;
+        bool urgent = wifi_sniffer_has_alert();
+
+        if (interval_elapsed || urgent) {
             last_report = now;
 
             wifi_report_t r = wifi_sniffer_collect();
             bthome_broadcast(&r);
 
-            if (r.deauth || r.disassoc || r.pwnagotchi || r.evil_twin) {
-                ESP_LOGW(TAG, "deauth=%u disassoc=%u pwn=%d twin=%d%s",
-                         r.deauth, r.disassoc, r.pwnagotchi, r.evil_twin,
-                         (r.deauth + r.disassoc >= HG_ATTACK_THRESHOLD)
-                             ? " ATTACK!" : "");
+            if (r.flags) {
+                ESP_LOGW(TAG,
+                    "deauth=%u disassoc=%u probes=%u flags=0x%04X%s",
+                    r.deauth, r.disassoc, r.probe_requests, r.flags,
+                    urgent && !interval_elapsed ? " [URGENT]" : "");
             }
         }
 

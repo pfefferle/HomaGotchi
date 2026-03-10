@@ -25,7 +25,6 @@ static const char *TAG = "bthome";
 #define DEVINFO_V2        0x40   /* version 2, no encryption, no trigger */
 #define OBJ_PACKET_ID     0x00   /* uint8  */
 #define OBJ_COUNT_U16     0x3D   /* uint16 */
-#define OBJ_BOOL          0x0F   /* uint8  */
 
 /* ── Advertising parameters ───────────────────────────────────────────────── */
 
@@ -65,26 +64,30 @@ void bthome_init(void)
 
 void bthome_broadcast(const wifi_report_t *r)
 {
-    uint8_t attack = (r->deauth + r->disassoc) >= HG_ATTACK_THRESHOLD ? 1 : 0;
     s_packet_id++;
 
     /*
      * BTHome v2 service data:
      *   devinfo(1) + packet_id(2) +
      *   deauth count_u16(3) + disassoc count_u16(3) +
-     *   bool:attack(2) + bool:pwnagotchi(2) + bool:evil_twin(2)
+     *   probes count_u16(3) + flags count_u16(3)
      *   = 15 bytes
      *
-     * Full advertisement: flags(3) + name(9) + svc_header(4) + payload(15) = 31
+     * Full advertisement: flags(3) + name(8) + svc_header(4) + payload(15) = 30
+     *
+     * The flags field is a bitmask of HG_FLAG_* bits from config.h:
+     *   bit 0: deauth attack    bit 1: pwnagotchi
+     *   bit 2: evil twin        bit 3: beacon spam
+     *   bit 4: probe flood      bit 5: karma/multi-SSID
+     *   bit 6: pineapple device
      */
     uint8_t payload[] = {
         DEVINFO_V2,
         OBJ_PACKET_ID, s_packet_id,
         OBJ_COUNT_U16, (uint8_t)(r->deauth  & 0xFF), (uint8_t)(r->deauth  >> 8),
         OBJ_COUNT_U16, (uint8_t)(r->disassoc & 0xFF), (uint8_t)(r->disassoc >> 8),
-        OBJ_BOOL, attack,
-        OBJ_BOOL, r->pwnagotchi ? 1 : 0,
-        OBJ_BOOL, r->evil_twin  ? 1 : 0,
+        OBJ_COUNT_U16, (uint8_t)(r->probe_requests & 0xFF), (uint8_t)(r->probe_requests >> 8),
+        OBJ_COUNT_U16, (uint8_t)(r->flags & 0xFF), (uint8_t)(r->flags >> 8),
     };
 
     const char *name = HG_DEVICE_NAME;

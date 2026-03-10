@@ -4,8 +4,12 @@
  * Detects:
  *   - Deauth frames (subtype 0x0C)
  *   - Disassoc frames (subtype 0x0A)
- *   - Pwnagotchi beacons (vendor IE containing "pwnd" / "pwnagotchi")
+ *   - Pwnagotchi beacons (MAC DE:AD:BE:EF:DE:AD + JSON fallback)
  *   - Evil twin APs (same SSID from different BSSIDs)
+ *   - Beacon spam (many unique source MACs broadcasting beacons)
+ *   - Probe request floods (high rate of probe requests)
+ *   - Karma / multi-SSID devices (one BSSID advertising 3+ SSIDs)
+ *   - Pineapple devices (suspicious OUI in beacon source)
  *
  * SPDX-License-Identifier: MIT
  */
@@ -23,6 +27,8 @@ static const char *TAG = "sniffer";
 
 /* ── 802.11 management frame subtypes ─────────────────────────────────────── */
 
+#define SUBTYPE_ASSOC_REQ 0x00
+#define SUBTYPE_PROBE_REQ 0x04
 #define SUBTYPE_BEACON    0x08
 #define SUBTYPE_DISASSOC  0x0A
 #define SUBTYPE_DEAUTH    0x0C
@@ -32,16 +38,36 @@ static const char *TAG = "sniffer";
 #define IE_TAG_SSID       0
 #define IE_TAG_VENDOR     221
 
+/* Pwnagotchi broadcasts from this well-known source MAC */
+static const uint8_t PWNAGOTCHI_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
+
+/* ── Suspicious OUIs (first 3 bytes of MAC) for pineapple detection ───────── */
+
+typedef struct {
+    uint8_t oui[3];
+} oui_entry_t;
+
+static const oui_entry_t PINEAPPLE_OUIS[] = {
+    {{0x00, 0x13, 0x37}},  /* Hak5 WiFi Pineapple MK7 */
+    {{0x02, 0xC0, 0xCA}},  /* Hak5 variant */
+    {{0x02, 0x13, 0x37}},  /* Hak5 variant */
+    {{0x00, 0xC0, 0xCA}},  /* Alfa Inc */
+    {{0x1C, 0xBF, 0xCE}},  /* Shenzhen Century (common pineapple clone) */
+    {{0xDE, 0xAD, 0xBE}},  /* Spoofed/unassigned MAC prefix */
+};
+
+#define NUM_PINEAPPLE_OUIS (sizeof(PINEAPPLE_OUIS) / sizeof(PINEAPPLE_OUIS[0]))
+
 /* ── Counters (protected by spinlock) ─────────────────────────────────────── */
 
 static portMUX_TYPE s_counter_mux = portMUX_INITIALIZER_UNLOCKED;
 
 static uint16_t s_deauth;
 static uint16_t s_disassoc;
-static uint8_t  s_pwnagotchi;
-static uint8_t  s_evil_twin;
+static uint16_t s_probe_requests;
+static uint16_t s_flags;  /* bitmask of HG_FLAG_* */
 
-/* ── Evil-twin AP table ───────────────────────────────────────────────────── */
+/* ── Evil-twin / karma AP table ───────────────────────────────────────────── */
 
 typedef struct {
     char    ssid[HG_MAX_SSID_LEN + 1];
@@ -51,12 +77,17 @@ typedef struct {
 
 static ap_entry_t s_ap_table[HG_MAX_AP_ENTRIES];
 
+/* ── Beacon spam: unique source MAC tracker ───────────────────────────────── */
+
+static uint8_t s_beacon_macs[HG_MAX_BEACON_MACS][6];
+static uint16_t s_beacon_mac_count;
+
 /* ── Channel state ────────────────────────────────────────────────────────── */
 
 static uint8_t s_channel = 1;
-static uint32_t s_collect_count;  /* number of collect() calls, for periodic AP reset */
+static uint32_t s_collect_count;
 
-/* ── Beacon helpers ───────────────────────────────────────────────────────── */
+/* ── Helpers ──────────────────────────────────────────────────────────────── */
 
 /** Return true if needle appears anywhere in [haystack, haystack+len). */
 static bool mem_contains(const uint8_t *haystack, uint16_t len,
@@ -74,24 +105,33 @@ static bool mem_contains(const uint8_t *haystack, uint16_t len,
     return false;
 }
 
-/** Walk tagged IEs looking for a pwnagotchi vendor IE. */
-static bool ie_has_pwnagotchi(const uint8_t *ie, uint16_t ie_len)
+/** Check if a MAC OUI matches any known pineapple device. */
+static bool is_pineapple_oui(const uint8_t *mac)
 {
-    uint16_t pos = 0;
-    while (pos + 2 <= ie_len) {
-        uint8_t tag = ie[pos];
-        uint8_t len = ie[pos + 1];
-        pos += 2;
-        if (pos + len > ie_len) {
-            break;
+    for (int i = 0; i < NUM_PINEAPPLE_OUIS; i++) {
+        if (memcmp(mac, PINEAPPLE_OUIS[i].oui, 3) == 0) {
+            return true;
         }
-        if (tag == IE_TAG_VENDOR && len > 4) {
-            if (mem_contains(&ie[pos], len, "pwnd") ||
-                mem_contains(&ie[pos], len, "pwnagotchi")) {
-                return true;
-            }
-        }
-        pos += len;
+    }
+    return false;
+}
+
+/**
+ * Check whether a beacon is from a pwnagotchi.
+ *
+ * Primary: pwnagotchi uses the well-known source MAC DE:AD:BE:EF:DE:AD.
+ * Fallback: scan the frame body for pwnagotchi JSON keys ("pwnd_tot",
+ * "identity") in case a fork uses a different MAC.
+ */
+static bool is_pwnagotchi_beacon(const uint8_t *src_mac,
+                                  const uint8_t *ie, uint16_t ie_len)
+{
+    if (memcmp(src_mac, PWNAGOTCHI_MAC, 6) == 0) {
+        return true;
+    }
+    if (mem_contains(ie, ie_len, "pwnd_tot") ||
+        mem_contains(ie, ie_len, "\"identity\"")) {
+        return true;
     }
     return false;
 }
@@ -119,13 +159,16 @@ static uint8_t ie_get_ssid(const uint8_t *ie, uint16_t ie_len,
 }
 
 /**
- * Record an SSID/BSSID pair.
- * Returns true when the same SSID is already known from a *different* BSSID.
+ * Record an SSID/BSSID pair.  Sets flags via out parameters:
+ *   - evil_twin: same SSID seen from a different BSSID
+ *   - karma: same BSSID seen with HG_KARMA_SSID_THRESHOLD+ different SSIDs
  */
-static bool ap_table_track(const char *ssid, const uint8_t *bssid)
+static void ap_table_track(const char *ssid, const uint8_t *bssid,
+                           bool *evil_twin, bool *karma)
 {
     int free_slot = -1;
-    bool ssid_seen = false;
+    bool ssid_from_other_bssid = false;
+    int ssids_from_this_bssid = 0;
 
     for (int i = 0; i < HG_MAX_AP_ENTRIES; i++) {
         if (!s_ap_table[i].used) {
@@ -134,23 +177,49 @@ static bool ap_table_track(const char *ssid, const uint8_t *bssid)
             }
             continue;
         }
-        if (strcmp(s_ap_table[i].ssid, ssid) != 0) {
-            continue;
+        /* Same SSID + same BSSID = known AP, nothing new */
+        if (strcmp(s_ap_table[i].ssid, ssid) == 0 &&
+            memcmp(s_ap_table[i].bssid, bssid, 6) == 0) {
+            *evil_twin = false;
+            *karma = false;
+            return;
         }
+        /* Same SSID, different BSSID → evil twin */
+        if (strcmp(s_ap_table[i].ssid, ssid) == 0) {
+            ssid_from_other_bssid = true;
+        }
+        /* Same BSSID, different SSID → count for karma */
         if (memcmp(s_ap_table[i].bssid, bssid, 6) == 0) {
-            return false;  /* Same AP, nothing new */
+            ssids_from_this_bssid++;
         }
-        ssid_seen = true;
     }
 
+    /* Insert the new entry */
     if (free_slot >= 0) {
         strncpy(s_ap_table[free_slot].ssid, ssid, HG_MAX_SSID_LEN);
         s_ap_table[free_slot].ssid[HG_MAX_SSID_LEN] = '\0';
         memcpy(s_ap_table[free_slot].bssid, bssid, 6);
         s_ap_table[free_slot].used = true;
+        ssids_from_this_bssid++;  /* count the one we just added */
     }
 
-    return ssid_seen;
+    *evil_twin = ssid_from_other_bssid;
+    *karma = (ssids_from_this_bssid >= HG_KARMA_SSID_THRESHOLD);
+}
+
+/** Track a beacon source MAC for spam detection. Returns new unique count. */
+static uint16_t beacon_mac_track(const uint8_t *mac)
+{
+    for (int i = 0; i < s_beacon_mac_count; i++) {
+        if (memcmp(s_beacon_macs[i], mac, 6) == 0) {
+            return s_beacon_mac_count;  /* already known */
+        }
+    }
+    if (s_beacon_mac_count < HG_MAX_BEACON_MACS) {
+        memcpy(s_beacon_macs[s_beacon_mac_count], mac, 6);
+        s_beacon_mac_count++;
+    }
+    return s_beacon_mac_count;
 }
 
 /* ── Promiscuous callback (runs in WiFi task context) ─────────────────────── */
@@ -166,12 +235,15 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     uint16_t frame_len = pkt->rx_ctrl.sig_len;
     uint8_t subtype = (frame[0] >> 4) & 0x0F;
 
+    /* ── Deauth ───────────────────────────────────────────────────────────── */
     if (subtype == SUBTYPE_DEAUTH) {
         portENTER_CRITICAL_ISR(&s_counter_mux);
         s_deauth++;
         portEXIT_CRITICAL_ISR(&s_counter_mux);
         return;
     }
+
+    /* ── Disassoc ─────────────────────────────────────────────────────────── */
     if (subtype == SUBTYPE_DISASSOC) {
         portENTER_CRITICAL_ISR(&s_counter_mux);
         s_disassoc++;
@@ -179,25 +251,54 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         return;
     }
 
+    /* ── Probe request flood ──────────────────────────────────────────────── */
+    if (subtype == SUBTYPE_PROBE_REQ) {
+        portENTER_CRITICAL_ISR(&s_counter_mux);
+        s_probe_requests++;
+        portEXIT_CRITICAL_ISR(&s_counter_mux);
+        return;
+    }
+
+    /* ── Beacon analysis ──────────────────────────────────────────────────── */
     if (subtype != SUBTYPE_BEACON || frame_len <= BEACON_IE_OFFSET) {
         return;
     }
 
+    const uint8_t *src_addr = &frame[10];
     const uint8_t *bssid    = &frame[16];
     const uint8_t *ie_start = &frame[BEACON_IE_OFFSET];
     uint16_t       ie_len   = frame_len - BEACON_IE_OFFSET;
 
-    if (ie_has_pwnagotchi(ie_start, ie_len)) {
+    char ssid[HG_MAX_SSID_LEN + 1] = {0};
+    uint8_t ssid_len = ie_get_ssid(ie_start, ie_len, ssid, sizeof(ssid));
+
+    /* Pwnagotchi detection */
+    if (is_pwnagotchi_beacon(src_addr, ie_start, ie_len)) {
         portENTER_CRITICAL_ISR(&s_counter_mux);
-        s_pwnagotchi = 1;
+        s_flags |= HG_FLAG_PWNAGOTCHI;
         portEXIT_CRITICAL_ISR(&s_counter_mux);
     }
 
-    char ssid[HG_MAX_SSID_LEN + 1] = {0};
-    if (ie_get_ssid(ie_start, ie_len, ssid, sizeof(ssid)) > 0) {
-        if (ap_table_track(ssid, bssid)) {
+    /* Pineapple OUI detection */
+    if (is_pineapple_oui(src_addr)) {
+        portENTER_CRITICAL_ISR(&s_counter_mux);
+        s_flags |= HG_FLAG_PINEAPPLE;
+        portEXIT_CRITICAL_ISR(&s_counter_mux);
+    }
+
+    /* Beacon spam: track unique source MACs */
+    beacon_mac_track(src_addr);
+
+    /* Evil twin + karma detection */
+    if (ssid_len > 0) {
+        bool evil_twin = false;
+        bool karma = false;
+        ap_table_track(ssid, bssid, &evil_twin, &karma);
+
+        if (evil_twin || karma) {
             portENTER_CRITICAL_ISR(&s_counter_mux);
-            s_evil_twin = 1;
+            if (evil_twin) s_flags |= HG_FLAG_EVIL_TWIN;
+            if (karma)     s_flags |= HG_FLAG_KARMA;
             portEXIT_CRITICAL_ISR(&s_counter_mux);
         }
     }
@@ -208,6 +309,8 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 void wifi_sniffer_init(void)
 {
     memset(s_ap_table, 0, sizeof(s_ap_table));
+    memset(s_beacon_macs, 0, sizeof(s_beacon_macs));
+    s_beacon_mac_count = 0;
 
     esp_netif_init();
     esp_event_loop_create_default();
@@ -236,26 +339,53 @@ void wifi_sniffer_hop(void)
     esp_wifi_set_channel(s_channel, WIFI_SECOND_CHAN_NONE);
 }
 
+bool wifi_sniffer_has_alert(void)
+{
+    portENTER_CRITICAL(&s_counter_mux);
+    bool alert = (s_flags != 0) ||
+                 ((s_deauth + s_disassoc) >= HG_ATTACK_THRESHOLD) ||
+                 (s_probe_requests >= HG_PROBE_FLOOD_THRESHOLD);
+    portEXIT_CRITICAL(&s_counter_mux);
+
+    /* Also check beacon spam (not under spinlock, but single-writer is ok) */
+    if (s_beacon_mac_count >= HG_BEACON_SPAM_THRESHOLD) {
+        alert = true;
+    }
+    return alert;
+}
+
 wifi_report_t wifi_sniffer_collect(void)
 {
     wifi_report_t r;
 
     portENTER_CRITICAL(&s_counter_mux);
-    r.deauth     = s_deauth;
-    r.disassoc   = s_disassoc;
-    r.pwnagotchi = s_pwnagotchi != 0;
-    r.evil_twin  = s_evil_twin  != 0;
-    s_deauth     = 0;
-    s_disassoc   = 0;
-    s_pwnagotchi = 0;
-    s_evil_twin  = 0;
+    r.deauth         = s_deauth;
+    r.disassoc       = s_disassoc;
+    r.probe_requests = s_probe_requests;
+    r.flags          = s_flags;
+
+    /* Evaluate threshold-based flags before resetting counters */
+    if ((s_deauth + s_disassoc) >= HG_ATTACK_THRESHOLD) {
+        r.flags |= HG_FLAG_DEAUTH;
+    }
+    if (s_probe_requests >= HG_PROBE_FLOOD_THRESHOLD) {
+        r.flags |= HG_FLAG_PROBE_FLOOD;
+    }
+    if (s_beacon_mac_count >= HG_BEACON_SPAM_THRESHOLD) {
+        r.flags |= HG_FLAG_BEACON_SPAM;
+    }
+
+    s_deauth         = 0;
+    s_disassoc       = 0;
+    s_probe_requests = 0;
+    s_flags          = 0;
     portEXIT_CRITICAL(&s_counter_mux);
 
-    /*
-     * Periodically clear the AP table to prevent stale entries from blocking
-     * new APs and to reduce false positives from roaming/mesh environments.
-     * Reset every ~5 minutes (30 collect cycles at 10 s each).
-     */
+    /* Reset beacon MAC tracker each interval */
+    s_beacon_mac_count = 0;
+    memset(s_beacon_macs, 0, sizeof(s_beacon_macs));
+
+    /* Periodically clear the AP table */
     s_collect_count++;
     if (s_collect_count >= 30) {
         s_collect_count = 0;
