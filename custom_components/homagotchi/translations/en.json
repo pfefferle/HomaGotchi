@@ -12,16 +12,18 @@
     "step": {
       "init": {
         "title": "HomaGotchi Options",
-        "description": "Configure BLE signature spam detection sensitivity",
+        "description": "Configure detection sensitivity for BLE and WiFi monitoring",
         "data": {
           "intensity_threshold": "BLE Signature Threshold (events required)",
           "intensity_window": "BLE Signature Window (seconds)",
-          "auto_reset_timeout": "Auto-Reset Timeout (seconds)"
+          "auto_reset_timeout": "Auto-Reset Timeout (seconds)",
+          "wifi_deauth_threshold": "WiFi Deauth Threshold (frames per report)"
         },
         "data_description": {
           "intensity_threshold": "Number of suspicious BLE signature matches required to trigger spam activity",
           "intensity_window": "Rolling time window in seconds for BLE signature counting",
-          "auto_reset_timeout": "Time in seconds before spam and device states auto-reset if no new detections occur"
+          "auto_reset_timeout": "Time in seconds before spam and device states auto-reset if no new detections occur",
+          "wifi_deauth_threshold": "Number of deauth/disassoc frames per companion report to trigger WiFi attack alert"
         }
       }
     }

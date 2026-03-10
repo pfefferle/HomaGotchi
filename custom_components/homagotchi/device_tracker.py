@@ -30,6 +30,11 @@ class PentestBleDeviceTracker(ScannerEntity):
 
     _attr_has_entity_name = True
     _attr_source_type = SourceType.BLUETOOTH_LE
+    _unrecorded_attributes = frozenset({
+        "signature_catalog",
+        "signature_counts",
+        "last_details",
+    })
 
     def __init__(self, address: str, auto_reset_timeout: int) -> None:
         """Initialize a tracked BLE signature device."""
@@ -92,15 +97,30 @@ class PentestBleDeviceTracker(ScannerEntity):
         self._is_connected = connected
         return True
 
+    def _describe_signature(self, signature_id: str) -> str:
+        """Return a human-readable label for a signature ID."""
+        meta = BLE_SIGNATURES.get(signature_id, {})
+        return meta.get("description", signature_id.replace("_", " ").title())
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return tracker metadata for automations and debugging."""
+        """Return tracker metadata with human-readable summaries."""
+        # "FlipperZero BLE service UUID (x3), FlipperZero payload (x1)"
+        attacks: list[str] = []
+        for sig_id, count in self._signature_counts.items():
+            label = self._describe_signature(sig_id)
+            attacks.append(f"{label} (x{count})" if count > 1 else label)
+
+        summary = ", ".join(attacks) if attacks else "Unknown device"
+
         return {
-            "scanner_source": "home_assistant_bluetooth",
-            "last_rssi": self._last_rssi,
+            "summary": summary,
+            "attacks": attacks,
+            "rssi": self._last_rssi,
+            "total_hits": self._total_matches,
             "first_seen": self._first_seen.isoformat() if self._first_seen else None,
             "last_seen": self._last_seen.isoformat() if self._last_seen else None,
-            "total_signature_matches": self._total_matches,
+            # Unrecorded detail
             "signature_counts": dict(self._signature_counts),
             "last_details": dict(self._last_details),
             "signature_catalog": {

@@ -1,23 +1,30 @@
 # HomaGotchi
 
-Defensive BLE signature monitoring for Home Assistant.
+Defensive BLE and WiFi monitoring for Home Assistant.
 
 ## Scope
 
-This integration is BLE-only and defensive-only:
-- Uses the Home Assistant Bluetooth network (`bluetooth` integration scanners/proxies).
-- Detects BLE signatures commonly associated with pentest/spoofing tooling.
-- Focuses on passive BLE observation and alerting.
+This integration is defensive-only:
+- Uses the Home Assistant Bluetooth network (`bluetooth` integration scanners/proxies) for BLE signature detection.
+- Supports WiFi attack detection via the **HomaGotchi Companion** — an ESP32-S3 device that passively monitors WiFi and reports findings over BLE using the [BTHome v2](https://bthome.io/) protocol.
+- Focuses on passive observation and alerting.
 
 ## Entities
 
 The integration creates:
+
+### BLE Sensors
 - `BLE Spam Activity` (`binary_sensor`, `problem` class): sustained spam behavior.
 - `Pentest Device Presence` (`binary_sensor`, `presence` class): direct pentest-device signature presence.
 - Dynamic `device_tracker` entities (`Pentest Device <MAC>`): device-style tracking for Flipper/Marauder-like signatures.
 - `Face` (`text`): Pwnagotchi status text entity.
 
-Spam and tracker activity auto-reset after the configured inactivity timeout.
+### WiFi Sensors (via Companion device)
+- `WiFi Deauth Attack` (`binary_sensor`, `problem` class): detects deauthentication/disassociation frame floods.
+- `WiFi Pwnagotchi` (`binary_sensor`, `problem` class): detects Pwnagotchi beacon frames.
+- `WiFi Evil Twin` (`binary_sensor`, `problem` class): detects duplicate SSIDs broadcast from different BSSIDs.
+
+All sensors auto-reset after the configured inactivity timeout.
 
 ## Signatures Detected
 
@@ -55,6 +62,7 @@ Checked projects and whether they expose concrete BLE signatures usable for dete
 - `intensity_threshold`: Event count required for the general BLE detector
 - `intensity_window`: Rolling seconds window for general BLE detector
 - `auto_reset_timeout`: Seconds of inactivity before sensor resets to `off`
+- `wifi_deauth_threshold`: Minimum deauth/disassoc frame count to trigger the WiFi deauth sensor (default: 5)
 
 ## Installation
 
@@ -74,14 +82,57 @@ Checked projects and whether they expose concrete BLE signatures usable for dete
 
 ## How Detection Works
 
+### BLE Detection
 1. Registers a callback via Home Assistant Bluetooth APIs.
 2. Inspects manufacturer data, service UUIDs, and service markers.
 3. Applies defensive heuristics (rapid advertising + signature matching).
 4. Triggers spam state once threshold is met, and tracks matching Flipper-family devices.
 5. Exposes rich attributes for automations and incident review.
 
+### WiFi Detection (Companion)
+1. The HomaGotchi Companion device runs in WiFi promiscuous mode, capturing raw 802.11 management frames.
+2. It counts deauthentication and disassociation frames, parses beacon IEs for Pwnagotchi signatures, and tracks SSID/BSSID pairs to detect evil twins.
+3. Every 10 seconds, it broadcasts a BTHome v2 BLE advertisement with the collected counters and boolean flags.
+4. Home Assistant receives these advertisements via its Bluetooth stack — no WiFi pairing or network connection is needed.
+5. The integration parses the BTHome payload, deduplicates by packet ID, and updates the WiFi binary sensors.
+
+## HomaGotchi Companion Firmware
+
+The companion firmware lives in `firmware/homagotchi-companion/` and targets the **M5Stack Atom S3** (ESP32-S3).
+
+### Building & Flashing
+
+```bash
+cd firmware/homagotchi-companion
+pio run                          # build
+pio run -t upload                # flash via USB
+pio device monitor               # serial monitor (115200 baud)
+```
+
+### What It Detects
+
+| Threat | Method |
+|---|---|
+| Deauth/Disassoc floods | Counts management frames with subtype 0x0C / 0x0A |
+| Pwnagotchi beacons | Parses vendor-specific IEs (tag 221) for `pwnd` / `pwnagotchi` strings |
+| Evil twin APs | Tracks SSID→BSSID mappings; flags same SSID from a new BSSID |
+
+### Configuration
+
+All tunables are in `include/config.h`:
+- `HG_DEVICE_NAME` — BLE advertised name (default: `"Gotchi"`)
+- `HG_CHANNEL_HOP_MS` — channel hop interval (default: 500 ms)
+- `HG_REPORT_INTERVAL_MS` — BLE broadcast interval (default: 10 s)
+- `MAX_AP_ENTRIES` — AP table size for evil twin tracking (default: 64)
+
+### Notes
+
+- The companion uses WiFi promiscuous mode for passive capture and BLE legacy advertising for reporting — it never connects to any WiFi network.
+- Evil twin detection may produce false positives in mesh/roaming environments where multiple APs legitimately share the same SSID.
+
 ## Notes
 
 - This project is intended for defensive awareness and monitoring.
 - BLE signature detection can produce false positives depending on your environment.
+- WiFi evil twin detection may flag legitimate mesh/roaming setups.
 - Tune thresholds for your location and device density.

@@ -78,6 +78,16 @@ GOOGLE_FAST_PAIR_PAYLOAD_TAIL = b"\x02\x0A"
 GOOGLE_FAST_PAIR_MARKER = "FE2C"
 TILE_MARKER = "FEED"
 
+# WiFi monitor companion device detection thresholds
+WIFI_MONITOR_NAME_PREFIX = "Gotchi"
+CONF_WIFI_DEAUTH_THRESHOLD = "wifi_deauth_threshold"
+DEFAULT_WIFI_DEAUTH_THRESHOLD = 5
+
+# BTHome boolean object indices (must match firmware payload order in bthome.c)
+BOOL_IDX_DEAUTH = 0
+BOOL_IDX_PWNAGOTCHI = 1
+BOOL_IDX_EVIL_TWIN = 2
+
 # Human-friendly descriptions used in state attributes
 BLE_SIGNATURES = {
     "flipper_zero_service_uuid": {

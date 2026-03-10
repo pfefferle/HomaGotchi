@@ -6,10 +6,10 @@ Keep HomaGotchi as a defensive BLE monitoring integration for Home Assistant.
 
 ## Non-Negotiable Scope
 
-- BLE-only detection using Home Assistant Bluetooth APIs.
-- Defensive signature detection and alerting only.
+- Defensive detection and alerting only.
+- BLE signature detection using Home Assistant Bluetooth APIs.
+- WiFi deauth/disassoc detection via BTHome companion devices (ESP32 firmware in `firmware/`).
 - No offensive tooling, packet injection, jamming, deauth, or exploit helpers.
-- No WiFi monitor-mode detection features in this repository.
 
 ## Preferred Sensor Semantics
 
@@ -22,12 +22,14 @@ Keep HomaGotchi as a defensive BLE monitoring integration for Home Assistant.
 - Favor maintainable, testable detection logic over large monolithic handlers.
 - Keep signature metadata centralized in `custom_components/homagotchi/const.py`.
 - Keep detector logic in `custom_components/homagotchi/binary_sensor.py`.
+- Keep BTHome parsing in `custom_components/homagotchi/bthome.py`.
 - Preserve Home Assistant native patterns for async callbacks and unload cleanup.
 
 ## Documentation Rules
 
-- README must describe BLE-only defensive scope.
-- Any docs mentioning WiFi deauth, offensive use, or attack execution are out of scope.
+- README must describe defensive-only scope.
+- Document WiFi monitoring as passive detection via BTHome companion devices.
+- Any docs mentioning offensive use or attack execution are out of scope.
 - If scope changes, update README and translation strings in the same PR.
 
 ## Release Hygiene

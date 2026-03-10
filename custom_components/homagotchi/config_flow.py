@@ -12,9 +12,11 @@ from .const import (
     CONF_AUTO_RESET_TIMEOUT,
     CONF_INTENSITY_THRESHOLD,
     CONF_INTENSITY_WINDOW,
+    CONF_WIFI_DEAUTH_THRESHOLD,
     DEFAULT_AUTO_RESET_TIMEOUT,
     DEFAULT_INTENSITY_THRESHOLD,
     DEFAULT_INTENSITY_WINDOW,
+    DEFAULT_WIFI_DEAUTH_THRESHOLD,
     DOMAIN,
 )
 
@@ -40,6 +42,7 @@ class HomaGotchiConfigFlow(ConfigFlow):
                     CONF_INTENSITY_THRESHOLD: DEFAULT_INTENSITY_THRESHOLD,
                     CONF_INTENSITY_WINDOW: DEFAULT_INTENSITY_WINDOW,
                     CONF_AUTO_RESET_TIMEOUT: DEFAULT_AUTO_RESET_TIMEOUT,
+                    CONF_WIFI_DEAUTH_THRESHOLD: DEFAULT_WIFI_DEAUTH_THRESHOLD,
                 },
             )
 
@@ -83,6 +86,13 @@ class HomaGotchiOptionsFlow(OptionsFlow):
                             DEFAULT_AUTO_RESET_TIMEOUT,
                         ),
                     ): vol.All(vol.Coerce(int), vol.Range(min=10, max=600)),
+                    vol.Optional(
+                        CONF_WIFI_DEAUTH_THRESHOLD,
+                        default=self.config_entry.options.get(
+                            CONF_WIFI_DEAUTH_THRESHOLD,
+                            DEFAULT_WIFI_DEAUTH_THRESHOLD,
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
                 }
             ),
         )

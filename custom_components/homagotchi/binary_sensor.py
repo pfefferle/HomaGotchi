@@ -22,15 +22,25 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
+from .bthome import (
+    BTHOME_SERVICE_UUID,
+    parse_bthome_v2,
+)
 from .const import (
     BLE_SIGNATURES,
+    BOOL_IDX_DEAUTH,
+    BOOL_IDX_EVIL_TWIN,
+    BOOL_IDX_PWNAGOTCHI,
     CONF_AUTO_RESET_TIMEOUT,
     CONF_INTENSITY_THRESHOLD,
     CONF_INTENSITY_WINDOW,
+    CONF_WIFI_DEAUTH_THRESHOLD,
     DEFAULT_AUTO_RESET_TIMEOUT,
     DEFAULT_INTENSITY_THRESHOLD,
     DEFAULT_INTENSITY_WINDOW,
+    DEFAULT_WIFI_DEAUTH_THRESHOLD,
     DOMAIN,
+    WIFI_MONITOR_NAME_PREFIX,
 )
 from .signatures import SignatureMatch, match_ble_signatures
 
@@ -43,6 +53,12 @@ class _BaseBleActivitySensor(BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_icon = "mdi:bluetooth-searching"
     _signature_families: set[str] | None = None
+    _unrecorded_attributes = frozenset({
+        "signature_catalog",
+        "signature_counts",
+        "devices",
+        "intensity",
+    })
 
     def __init__(
         self,
@@ -258,19 +274,64 @@ class _BaseBleActivitySensor(BinarySensorEntity):
         self._events = [event for event in self._events if event[0] > cutoff]
         return len(self._events)
 
+    def _describe_signature(self, signature_id: str) -> str:
+        """Return a human-readable label for a signature ID."""
+        meta = BLE_SIGNATURES.get(signature_id, {})
+        return meta.get("description", signature_id.replace("_", " ").title())
+
+    def _build_summary(self) -> str:
+        """Build a one-line human-readable summary of current detections."""
+        if not self._attr_is_on:
+            return "No activity"
+
+        # Collect unique attack descriptions across all devices
+        attack_types: list[str] = []
+        for sig_id in self._signature_counts:
+            label = self._describe_signature(sig_id)
+            if label not in attack_types:
+                attack_types.append(label)
+
+        device_names = [
+            d.get("name", d["address"]) for d in self._devices.values()
+        ]
+
+        parts: list[str] = []
+        if attack_types:
+            parts.append(", ".join(attack_types[:3]))
+            if len(attack_types) > 3:
+                parts.append(f"(+{len(attack_types) - 3} more)")
+        if device_names:
+            parts.append(f"from {', '.join(device_names[:3])}")
+            if len(device_names) > 3:
+                parts.append(f"(+{len(device_names) - 3} more)")
+
+        return " ".join(parts) if parts else "Suspicious activity detected"
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return rich state attributes for automations and debugging."""
-        devices: list[dict[str, Any]] = []
+        """Return state attributes with human-readable summaries."""
+        # Readable attack list: "AppleJuice popup (x3), FlipperZero (x1)"
+        attacks: list[str] = []
+        for sig_id, count in self._signature_counts.items():
+            label = self._describe_signature(sig_id)
+            attacks.append(f"{label} (x{count})" if count > 1 else label)
+
+        # Readable device list: "FlipperBLE (AA:BB:CC, -42 dBm)"
+        devices: list[str] = []
+        devices_detail: list[dict[str, Any]] = []
         for device in self._devices.values():
-            devices.append(
+            name = device.get("name", device["address"])
+            rssi = device["rssi"]
+            addr = device["address"]
+            devices.append(f"{name} ({addr}, {rssi} dBm)")
+            devices_detail.append(
                 {
-                    "address": device["address"],
-                    "name": device["name"],
-                    "rssi": device["rssi"],
+                    "address": addr,
+                    "name": name,
+                    "rssi": rssi,
                     "first_seen": device["first_seen"].isoformat(),
                     "last_seen": device["last_seen"].isoformat(),
-                    "count": device["count"],
+                    "hits": device["count"],
                     "signatures": sorted(device["signatures"]),
                     "signature_counts": dict(device["signature_counts"]),
                     "last_details": dict(device["last_details"]),
@@ -278,16 +339,17 @@ class _BaseBleActivitySensor(BinarySensorEntity):
             )
 
         return {
-            "detection_active": self._attr_is_on,
-            "detector_type": self._detector_type,
-            "scanner_source": "home_assistant_bluetooth",
-            "total_signature_matches": self._total_matches,
-            "unique_devices": len(self._devices),
-            "last_detection_time": (
+            "summary": self._build_summary(),
+            "attacks": attacks,
+            "detected_devices": devices,
+            "total_hits": self._total_matches,
+            "device_count": len(self._devices),
+            "last_seen": (
                 self._last_detection_time.isoformat()
                 if self._last_detection_time
                 else None
             ),
+            # Unrecorded detail attributes (for developer tools / debugging)
             "intensity": {
                 "current": self._calculate_intensity(datetime.now()),
                 "threshold": self._intensity_threshold,
@@ -295,7 +357,7 @@ class _BaseBleActivitySensor(BinarySensorEntity):
             },
             "signature_counts": dict(self._signature_counts),
             "signature_catalog": self._signature_catalog(),
-            "devices": devices,
+            "devices": devices_detail,
         }
 
 
@@ -310,7 +372,7 @@ class BleSpamActivitySensor(_BaseBleActivitySensor):
             hass,
             entry,
             name="BLE Spam Activity",
-            unique_id=f"{DOMAIN}_ble_spam_detector",
+            unique_id=f"{DOMAIN}_ble_spam",
             model="BLE Signature Detector",
             device_class=BinarySensorDeviceClass.PROBLEM,
             intensity_threshold=entry.options.get(
@@ -335,7 +397,7 @@ class BlePentestPresenceSensor(_BaseBleActivitySensor):
             hass,
             entry,
             name="Pentest Device Presence",
-            unique_id=f"{DOMAIN}_pentest_presence",
+            unique_id=f"{DOMAIN}_pentest",
             model="BLE Presence Detector",
             device_class=BinarySensorDeviceClass.PRESENCE,
             intensity_threshold=1,
@@ -346,16 +408,302 @@ class BlePentestPresenceSensor(_BaseBleActivitySensor):
         )
 
 
+class CompanionWifiSensor(BinarySensorEntity):
+    """Base class for WiFi sensors fed by BTHome companion devices.
+
+    The companion firmware sends three ordered generic_boolean objects:
+      [0] deauth attack active
+      [1] pwnagotchi detected
+      [2] evil twin detected
+    Subclasses set ``_bool_index`` to select which boolean they represent.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _bool_index: int = 0
+    _unrecorded_attributes = frozenset({
+        "companion_devices",
+    })
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        *,
+        name: str,
+        unique_id: str,
+        icon: str,
+    ) -> None:
+        """Initialize a companion WiFi sensor."""
+        self.hass = hass
+        self._entry = entry
+        self._attr_name = name
+        self._attr_unique_id = unique_id
+        self._attr_icon = icon
+        self._attr_is_on = False
+
+        self._auto_reset_timeout = entry.options.get(
+            CONF_AUTO_RESET_TIMEOUT, DEFAULT_AUTO_RESET_TIMEOUT
+        )
+        self._deauth_threshold = entry.options.get(
+            CONF_WIFI_DEAUTH_THRESHOLD, DEFAULT_WIFI_DEAUTH_THRESHOLD
+        )
+
+        self._callback_unsub = None
+        self._reset_timer_unsub = None
+        self._last_detection_time: datetime | None = None
+        self._total_deauth: int = 0
+        self._total_disassoc: int = 0
+        self._companion_devices: dict[str, dict[str, Any]] = {}
+
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name="Pwnagotchi BLE Defense",
+            manufacturer="Pwnagotchi",
+            model="WiFi Monitor",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Register BLE callback for BTHome WiFi monitor devices."""
+        scanner = async_get_scanner(self.hass)
+        if scanner is None:
+            _LOGGER.error("Bluetooth scanner unavailable; %s disabled", self._attr_name)
+            return
+
+        self._callback_unsub = async_register_callback(
+            self.hass,
+            self._handle_ble_advertisement,
+            {},
+            BluetoothScanningMode.ACTIVE,
+        )
+        self._reset_timer_unsub = async_track_time_interval(
+            self.hass,
+            self._check_auto_reset,
+            timedelta(seconds=10),
+        )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up callbacks."""
+        if self._callback_unsub is not None:
+            self._callback_unsub()
+            self._callback_unsub = None
+        if self._reset_timer_unsub is not None:
+            self._reset_timer_unsub()
+            self._reset_timer_unsub = None
+
+    @callback
+    def _handle_ble_advertisement(
+        self, service_info: BluetoothServiceInfo, change: Any
+    ) -> None:
+        """Parse BTHome advertisements from companion devices."""
+        del change
+
+        name = service_info.name or ""
+        if not name.startswith(WIFI_MONITOR_NAME_PREFIX):
+            return
+
+        service_data = service_info.service_data or {}
+        raw: bytes | None = None
+        for uuid_str, payload in service_data.items():
+            if BTHOME_SERVICE_UUID in str(uuid_str).lower():
+                raw = bytes(payload) if not isinstance(payload, bytes) else payload
+                break
+
+        if raw is None:
+            return
+
+        parsed = parse_bthome_v2(raw)
+        if parsed is None:
+            return
+
+        address = service_info.address or "unknown"
+        prev_id = self._companion_devices.get(address, {}).get("packet_id")
+        if parsed.packet_id is not None and parsed.packet_id == prev_id:
+            return
+
+        counts = parsed.get_all("count")
+        bools = parsed.get_all("generic_boolean")
+        deauth = counts[0] if len(counts) > 0 else 0
+        disassoc = counts[1] if len(counts) > 1 else 0
+        flag = bools[self._bool_index] if len(bools) > self._bool_index else 0
+
+        now = datetime.now()
+
+        device = self._companion_devices.setdefault(address, {
+            "address": address,
+            "name": name,
+            "first_seen": now,
+        })
+        device["name"] = name
+        device["last_seen"] = now
+        device["rssi"] = service_info.rssi
+        device["packet_id"] = parsed.packet_id
+        device["last_deauth"] = deauth
+        device["last_disassoc"] = disassoc
+
+        self._total_deauth += deauth
+        self._total_disassoc += disassoc
+
+        triggered = self._evaluate(flag, deauth, disassoc)
+
+        if triggered and not self._attr_is_on:
+            self._attr_is_on = True
+            self._last_detection_time = now
+            _LOGGER.warning("'%s' triggered (from %s)", self._attr_name, name)
+            self.async_write_ha_state()
+        elif triggered:
+            self._last_detection_time = now
+            self.async_write_ha_state()
+
+    def _evaluate(self, flag: int, deauth: int, disassoc: int) -> bool:
+        """Decide whether this report should trigger the sensor."""
+        return bool(flag)
+
+    @callback
+    def _check_auto_reset(self, now: datetime) -> None:
+        """Reset sensor after inactivity."""
+        del now
+
+        if not self._attr_is_on or self._last_detection_time is None:
+            return
+
+        idle = (datetime.now() - self._last_detection_time).total_seconds()
+        if idle <= self._auto_reset_timeout:
+            return
+
+        _LOGGER.info("'%s' auto-reset after %.0fs idle", self._attr_name, idle)
+        self._attr_is_on = False
+        self._total_deauth = 0
+        self._total_disassoc = 0
+        self._last_detection_time = None
+        self.async_write_ha_state()
+
+    def _build_summary(self) -> str:
+        """Build a human-readable summary for the current state."""
+        if not self._attr_is_on:
+            return "No activity"
+        return "Active"  # Subclasses override for specifics
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return companion WiFi detection attributes."""
+        reporters = [
+            f"{d['name']} ({d['address']}, {d.get('rssi', '?')} dBm)"
+            for d in self._companion_devices.values()
+        ]
+
+        companions = [
+            {
+                "address": d["address"],
+                "name": d["name"],
+                "rssi": d.get("rssi"),
+                "last_seen": d["last_seen"].isoformat() if d.get("last_seen") else None,
+                "last_deauth": d.get("last_deauth", 0),
+                "last_disassoc": d.get("last_disassoc", 0),
+            }
+            for d in self._companion_devices.values()
+        ]
+
+        return {
+            "summary": self._build_summary(),
+            "deauth_frames": self._total_deauth,
+            "disassoc_frames": self._total_disassoc,
+            "reporters": reporters,
+            "last_seen": (
+                self._last_detection_time.isoformat()
+                if self._last_detection_time
+                else None
+            ),
+            # Unrecorded detail
+            "companion_devices": companions,
+        }
+
+
+class WifiDeauthSensor(CompanionWifiSensor):
+    """WiFi deauthentication / disassociation attack sensor."""
+
+    _bool_index = BOOL_IDX_DEAUTH
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the deauth sensor."""
+        super().__init__(
+            hass, entry,
+            name="WiFi Deauth Attack",
+            unique_id=f"{DOMAIN}_deauth",
+            icon="mdi:wifi-alert",
+        )
+
+    def _evaluate(self, flag: int, deauth: int, disassoc: int) -> bool:
+        """Trigger on flag or when frame count exceeds threshold."""
+        return bool(flag) or (deauth + disassoc) >= self._deauth_threshold
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No deauth activity"
+        total = self._total_deauth + self._total_disassoc
+        parts = []
+        if self._total_deauth:
+            parts.append(f"{self._total_deauth} deauth")
+        if self._total_disassoc:
+            parts.append(f"{self._total_disassoc} disassoc")
+        return f"Attack detected: {' + '.join(parts)} frames"
+
+
+class WifiPwnagotchiSensor(CompanionWifiSensor):
+    """Pwnagotchi presence sensor via WiFi beacon analysis."""
+
+    _bool_index = BOOL_IDX_PWNAGOTCHI
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the pwnagotchi sensor."""
+        super().__init__(
+            hass, entry,
+            name="Pwnagotchi Detected",
+            unique_id=f"{DOMAIN}_pwnagotchi",
+            icon="mdi:ghost",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No pwnagotchi nearby"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"Pwnagotchi beacon detected (via {', '.join(reporters[:2])})"
+
+
+class WifiEvilTwinSensor(CompanionWifiSensor):
+    """Evil twin AP detection sensor."""
+
+    _bool_index = BOOL_IDX_EVIL_TWIN
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the evil twin sensor."""
+        super().__init__(
+            hass, entry,
+            name="Evil Twin Detected",
+            unique_id=f"{DOMAIN}_evil_twin",
+            icon="mdi:access-point-network-off",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No rogue APs detected"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"Duplicate SSID from different BSSID (via {', '.join(reporters[:2])})"
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up BLE binary sensors from a config entry."""
+    """Set up binary sensors from a config entry."""
     async_add_entities(
         [
             BleSpamActivitySensor(hass, entry),
             BlePentestPresenceSensor(hass, entry),
+            WifiDeauthSensor(hass, entry),
+            WifiPwnagotchiSensor(hass, entry),
+            WifiEvilTwinSensor(hass, entry),
         ]
     )
-    _LOGGER.info("Configured BLE defensive signature sensors")
+    _LOGGER.info("Configured defensive signature sensors")
