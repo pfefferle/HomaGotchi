@@ -29,6 +29,9 @@
 /* Unique SSIDs from one BSSID to flag karma / multi-SSID device */
 #define HG_KARMA_SSID_THRESHOLD  3
 
+/* Number of beacon frames per retaliation burst */
+#define HG_RETALIATION_BURST  5
+
 /* Number of SSID/BSSID pairs tracked for evil-twin detection */
 #define HG_MAX_AP_ENTRIES     64
 
@@ -47,3 +50,4 @@
 #define HG_FLAG_PROBE_FLOOD   (1 << 4)
 #define HG_FLAG_KARMA         (1 << 5)
 #define HG_FLAG_PINEAPPLE     (1 << 6)
+#define HG_FLAG_RETALIATION   (1 << 7)

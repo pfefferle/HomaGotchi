@@ -10,6 +10,7 @@
 #include "config.h"
 #include "wifi_sniffer.h"
 #include "bthome.h"
+#include "retaliation.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -60,6 +61,13 @@ static void monitor_task(void *arg)
             last_report = now;
 
             wifi_report_t r = wifi_sniffer_collect(interval_elapsed);
+
+            /* Defensive retaliation: broadcast funny beacons when attacked */
+            if (r.flags) {
+                retaliation_fire(r.flags);
+                r.flags |= HG_FLAG_RETALIATION;
+            }
+
             prev_flags = r.flags;
             bthome_broadcast(&r);
 
@@ -88,6 +96,7 @@ void app_main(void)
 
     wifi_sniffer_init();
     bthome_init();
+    retaliation_init();
 
     xTaskCreatePinnedToCore(monitor_task, "monitor", 4096, NULL, 5, NULL, 1);
 

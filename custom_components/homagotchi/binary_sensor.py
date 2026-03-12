@@ -44,6 +44,7 @@ from .const import (
     FLAG_PINEAPPLE,
     FLAG_PROBE_FLOOD,
     FLAG_PWNAGOTCHI,
+    FLAG_RETALIATION,
     WIFI_MONITOR_NAME_PREFIX,
 )
 from .signatures import SignatureMatch, match_ble_signatures
@@ -781,6 +782,28 @@ class WifiPineappleSensor(CompanionWifiSensor):
         return f"Suspicious OUI (Hak5/Alfa) in beacon (via {', '.join(reporters[:2])})"
 
 
+class WifiRetaliationSensor(CompanionWifiSensor):
+    """Indicates when the companion device is retaliating with defensive beacons."""
+
+    _flag_mask = FLAG_RETALIATION
+    _attr_device_class = None  # informational, not a problem
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the retaliation sensor."""
+        super().__init__(
+            hass, entry,
+            name="Retaliation Active",
+            unique_id=f"{DOMAIN}_retaliation",
+            icon="mdi:sword-cross",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "Standing down"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"Broadcasting defensive beacons (via {', '.join(reporters[:2])})"
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -798,6 +821,7 @@ async def async_setup_entry(
             WifiProbeFloodSensor(hass, entry),
             WifiKarmaSensor(hass, entry),
             WifiPineappleSensor(hass, entry),
+            WifiRetaliationSensor(hass, entry),
         ]
     )
     _LOGGER.info("Configured defensive signature sensors")

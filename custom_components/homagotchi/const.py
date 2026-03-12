@@ -210,6 +210,7 @@ FLAG_BEACON_SPAM = 1 << 3
 FLAG_PROBE_FLOOD = 1 << 4
 FLAG_KARMA = 1 << 5
 FLAG_PINEAPPLE = 1 << 6
+FLAG_RETALIATION = 1 << 7
 
 # Human-friendly descriptions used in state attributes
 BLE_SIGNATURES = {
