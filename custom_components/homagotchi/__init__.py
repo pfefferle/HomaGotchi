@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    STATE_FRIEND_COUNT,
+    STATE_FRIEND_ENCOUNTERS,
+    STATE_LAST_INCIDENT,
+    STATE_STARTED_AT,
+    STATE_TOTAL_XP,
+)
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.DEVICE_TRACKER,
+    Platform.SENSOR,
     Platform.TEXT,
 ]
 
@@ -25,6 +35,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up HomaGotchi from a config entry."""
     hass.data[DOMAIN][entry.entry_id] = entry.options
+    hass.data[DOMAIN].setdefault("state", {
+        STATE_TOTAL_XP: 0,
+        STATE_FRIEND_COUNT: 0,
+        STATE_FRIEND_ENCOUNTERS: [],
+        STATE_STARTED_AT: datetime.now(),
+        STATE_LAST_INCIDENT: None,
+    })
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

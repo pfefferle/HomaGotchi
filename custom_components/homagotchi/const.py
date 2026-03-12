@@ -14,28 +14,135 @@ DEFAULT_AUTO_RESET_TIMEOUT = 60
 
 # Pwnagotchi faces for the optional text entity
 PWNAGOTCHI_FACES = [
-    "(⇀‿‿↼)",  # sleeping
-    "(≖‿‿≖)",  # awakening
-    "(◕‿‿◕)",  # awake / normal
-    "( ⚆⚆)",   # observing (neutral mood)
-    "(☉☉ )",   # observing (neutral mood)
-    "( ◕‿◕)",  # observing (happy)
-    "(◕‿◕ )",  # observing (happy)
-    "(°▃▃°)",  # intense
-    "(⌐■_■)",  # cool
-    "(•‿‿•)",  # happy
-    "(^‿‿^)",  # grateful
-    "(ᵔ◡◡ᵔ)",  # excited
-    "(✜‿‿✜)",  # smart
-    "(♥‿‿♥)",  # friendly
-    "(☼‿‿☼)",  # motivated
-    "(≖__≖)",  # demotivated
-    "(-__-)",  # bored
-    "(╥☁╥ )",  # sad
-    "(ب__ب)",  # lonely
-    "(☓‿‿☓)",  # broken
-    "(#__#)",  # debugging
+    "(⇀‿‿↼)",  # 0  sleeping
+    "(≖‿‿≖)",  # 1  awakening
+    "(◕‿‿◕)",  # 2  awake / normal
+    "( ⚆⚆)",   # 3  observing (neutral mood)
+    "(☉☉ )",   # 4  observing (neutral mood)
+    "( ◕‿◕)",  # 5  observing (happy)
+    "(◕‿◕ )",  # 6  observing (happy)
+    "(°▃▃°)",  # 7  intense
+    "(⌐■_■)",  # 8  cool
+    "(•‿‿•)",  # 9  happy
+    "(^‿‿^)",  # 10 grateful
+    "(ᵔ◡◡ᵔ)",  # 11 excited
+    "(✜‿‿✜)",  # 12 smart
+    "(♥‿‿♥)",  # 13 friendly
+    "(☼‿‿☼)",  # 14 motivated
+    "(≖__≖)",  # 15 demotivated
+    "(-__-)",  # 16 bored
+    "(╥☁╥ )",  # 17 sad
+    "(ب__ب)",  # 18 lonely
+    "(☓‿‿☓)",  # 19 broken
+    "(#__#)",  # 20 debugging
 ]
+
+# Face indices by mood (referencing PWNAGOTCHI_FACES above)
+FACE_IDLE = [0, 16, 18]              # sleeping, bored, lonely
+FACE_MONITORING = [2, 5, 6, 8, 9, 14]  # awake, observing, cool, happy, motivated
+FACE_ALERT_BLE_SPAM = [7, 12, 3, 4]  # intense, smart, observing
+FACE_ALERT_FLIPPER = [15, 8, 20]     # demotivated, cool, debugging
+FACE_ALERT_DEAUTH = [17, 19, 7]      # sad, broken, intense
+FACE_ALERT_EVIL_TWIN = [15, 4, 20]   # demotivated, wide-eyed, debugging
+FACE_ALERT_PWNAGOTCHI = [10, 13, 11] # grateful, friendly, excited
+FACE_ALERT_MULTI = [7, 19, 20, 15]   # intense, broken, debugging, demotivated
+
+# Status quips by detection type
+QUIPS_IDLE = [
+    "all quiet on the wireless front",
+    "nothing to see here, move along",
+    "zzz... monitoring...",
+    "scanning the void",
+    "so peaceful... too peaceful",
+]
+QUIPS_BLE_SPAM = [
+    "someone is having a BLE party",
+    "popup storm incoming!",
+    "advertisements everywhere, like black friday",
+    "my bluetooth is tingling",
+]
+QUIPS_FLIPPER = [
+    "someone brought a flipper to the party",
+    "a wild hacker dolphin appears!",
+    "flipper detected - act natural",
+    "nice dolphin, would be a shame if someone logged it",
+]
+QUIPS_DEAUTH = [
+    "the wifi police have arrived",
+    "someone is kicking everyone off the network",
+    "deauth storm, grab an umbrella!",
+    "rude. very rude.",
+]
+QUIPS_EVIL_TWIN = [
+    "your AP has an evil doppelganger",
+    "trust issues: AP edition",
+    "the call is coming from inside the network",
+    "seeing double, and not the fun kind",
+]
+QUIPS_PWNAGOTCHI = [
+    "a wild pwnagotchi appears!",
+    "fren! (o_o)",
+    "another gotchi wants to play",
+    "peer detected - exchanging handshakes",
+    "new friend or old rival?",
+]
+QUIPS_BEACON_SPAM = [
+    "it's raining SSIDs, hallelujah",
+    "someone opened the beacon floodgates",
+    "fake APs everywhere, trust nothing",
+]
+QUIPS_KARMA = [
+    "a honey trap has been set",
+    "karma is a device, apparently",
+    "someone is answering all the probes",
+]
+QUIPS_PINEAPPLE = [
+    "who lives in a pineapple under the LAN?",
+    "hak5 vibes detected",
+    "that AP smells... fruity",
+]
+QUIPS_PROBE_FLOOD = [
+    "someone is asking ALL the questions",
+    "probe request overload!",
+    "nosy device alert",
+]
+QUIPS_MULTI = [
+    "it's a full-on cyber apocalypse out here",
+    "multiple threats, maximum paranoia!",
+    "they came in waves",
+    "this is fine. everything is fine.",
+]
+
+# Quip mapping keyed by sensor suffix
+QUIP_MAP = {
+    "ble_spam": QUIPS_BLE_SPAM,
+    "pentest": QUIPS_FLIPPER,
+    "deauth": QUIPS_DEAUTH,
+    "evil_twin": QUIPS_EVIL_TWIN,
+    "pwnagotchi": QUIPS_PWNAGOTCHI,
+    "beacon_spam": QUIPS_BEACON_SPAM,
+    "probe_flood": QUIPS_PROBE_FLOOD,
+    "karma": QUIPS_KARMA,
+    "pineapple": QUIPS_PINEAPPLE,
+}
+
+# XP level thresholds (cumulative detections -> level name)
+XP_LEVELS = [
+    (0, "Newborn"),
+    (10, "Script Kiddie Bait"),
+    (50, "Watchful"),
+    (150, "Paranoid"),
+    (500, "Battle-Hardened"),
+    (1500, "War-Scarred Veteran"),
+    (5000, "Legendary Sentinel"),
+]
+
+# Shared state keys for hass.data[DOMAIN]["state"]
+STATE_TOTAL_XP = "total_xp"
+STATE_FRIEND_COUNT = "friend_count"
+STATE_FRIEND_ENCOUNTERS = "friend_encounters"
+STATE_STARTED_AT = "started_at"
+STATE_LAST_INCIDENT = "last_incident"
 
 # Heuristics for suspicious advertisement behavior
 RAPID_ADVERTISEMENT_INTERVAL = 0.3
