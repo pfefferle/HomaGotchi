@@ -137,7 +137,11 @@ static bool is_pwnagotchi_beacon(const uint8_t *src_mac,
     }
 
     /* Method 2: pwngrid custom IE tags (222=payload, 223=compression,
-     * 224=identity, 225=signature, 226=stream header) */
+     * 224=identity, 225=signature, 226=stream header).
+     * Require at least 2 distinct pwngrid tags to avoid false positives
+     * from stray bytes being misinterpreted as IE tags. */
+    uint8_t pwngrid_tags_seen = 0;
+    uint8_t pwngrid_tag_mask = 0;  /* bits 0-4 for tags 222-226 */
     uint16_t pos = 0;
     while (pos + 2 <= ie_len) {
         uint8_t tag = ie[pos];
@@ -147,7 +151,14 @@ static bool is_pwnagotchi_beacon(const uint8_t *src_mac,
             break;
         }
         if (tag >= 222 && tag <= 226) {
-            return true;  /* pwngrid-specific IE found */
+            uint8_t bit = 1 << (tag - 222);
+            if (!(pwngrid_tag_mask & bit)) {
+                pwngrid_tag_mask |= bit;
+                pwngrid_tags_seen++;
+            }
+            if (pwngrid_tags_seen >= 2) {
+                return true;
+            }
         }
         pos += len;
     }
@@ -284,22 +295,39 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     }
 
     /* ── Pwnagotchi scan across ALL management frame types ──────────────── */
-    /* Pwnagotchi identity might arrive as beacon, probe response, or other.
-     * Scan any management frame large enough to have an IE section. */
-    if (frame_len > BEACON_IE_OFFSET) {
-        const uint8_t *any_src = &frame[10];
-        /* Skip our own frames */
-        if (memcmp(any_src, SELF_MAC, 6) != 0) {
-            const uint8_t *any_ie = &frame[BEACON_IE_OFFSET];
-            uint16_t any_ie_len = frame_len - BEACON_IE_OFFSET;
-            if (is_pwnagotchi_beacon(any_src, any_ie, any_ie_len)) {
-                ESP_LOGW(TAG, "PWNAGOTCHI in mgmt subtype=0x%02X from "
-                         "%02X:%02X:%02X:%02X:%02X:%02X",
-                         subtype, any_src[0], any_src[1], any_src[2],
-                         any_src[3], any_src[4], any_src[5]);
-                portENTER_CRITICAL_ISR(&s_counter_mux);
-                s_flags |= HG_FLAG_PWNAGOTCHI;
-                portEXIT_CRITICAL_ISR(&s_counter_mux);
+    /* pwngrid uses action frames (subtype 0x0D) with custom IE tags
+     * 222-226.  Use the correct IE offset per frame type to avoid
+     * false positives from interpreting fixed fields as IEs. */
+    {
+        uint16_t ie_offset;
+        if (subtype == SUBTYPE_BEACON || subtype == 0x05 /* probe resp */) {
+            ie_offset = BEACON_IE_OFFSET;  /* 36: skip 24-byte header + 12 fixed */
+        } else {
+            ie_offset = 24;  /* action/other: IEs right after MAC header */
+        }
+
+        if (frame_len > ie_offset) {
+            const uint8_t *any_src   = &frame[10];
+            const uint8_t *any_bssid = &frame[16];
+
+            /* Skip our own frames */
+            if (memcmp(any_src, SELF_MAC, 6) != 0) {
+                const uint8_t *ie = &frame[ie_offset];
+                uint16_t ie_len = frame_len - ie_offset;
+
+                if (is_pwnagotchi_beacon(any_src, ie, ie_len) ||
+                    is_pwnagotchi_beacon(any_bssid, ie, ie_len)) {
+                    ESP_LOGW(TAG, "PWNAGOTCHI subtype=0x%02X sa=%02X:%02X:%02X:%02X:%02X:%02X "
+                             "bssid=%02X:%02X:%02X:%02X:%02X:%02X",
+                             subtype,
+                             any_src[0], any_src[1], any_src[2],
+                             any_src[3], any_src[4], any_src[5],
+                             any_bssid[0], any_bssid[1], any_bssid[2],
+                             any_bssid[3], any_bssid[4], any_bssid[5]);
+                    portENTER_CRITICAL_ISR(&s_counter_mux);
+                    s_flags |= HG_FLAG_PWNAGOTCHI;
+                    portEXIT_CRITICAL_ISR(&s_counter_mux);
+                }
             }
         }
     }
@@ -324,7 +352,8 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 
     /* Pwnagotchi detection (already handled above for all mgmt frames,
      * but we still need the is_pwn flag to skip pineapple OUI check) */
-    bool is_pwn = is_pwnagotchi_beacon(src_addr, ie_start, ie_len);
+    bool is_pwn = is_pwnagotchi_beacon(src_addr, ie_start, ie_len) ||
+                  is_pwnagotchi_beacon(bssid, ie_start, ie_len);
 
     /* Pineapple OUI detection — skip if already identified as pwnagotchi,
      * since the well-known pwnagotchi MAC (DE:AD:BE:...) matches the

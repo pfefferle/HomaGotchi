@@ -23,8 +23,11 @@ static const char *TAG = "retaliate";
 
 /* ── Gotchi identity beacon ────────────────────────────────────────────────── */
 
-/* Source MAC for our pwnagotchi-style beacon */
+/* Source MAC for our pwnagotchi-style beacon (unique per device) */
 static const uint8_t GOTCHI_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+
+/* Well-known pwnagotchi BSSID used by pwngrid for peer discovery */
+static const uint8_t PWNGRID_BSSID[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
 
 /* JSON identity payload (pwngrid format) */
 static const char GOTCHI_IDENTITY[] =
@@ -192,17 +195,15 @@ void retaliation_send_gotchi_beacon(void)
     /* Destination: broadcast */
     memset(&frame[4], 0xFF, 6);
 
-    /* Source address + BSSID */
+    /* Source address (our unique MAC) */
     memcpy(&frame[10], GOTCHI_MAC, 6);
-    memcpy(&frame[16], GOTCHI_MAC, 6);
 
-    /* Category: vendor-specific (127) + OUI */
-    frame[24] = 127;
-    frame[25] = 0xDE;
-    frame[26] = 0xAD;
-    frame[27] = 0x00;
+    /* BSSID: well-known pwnagotchi address for peer discovery */
+    memcpy(&frame[16], PWNGRID_BSSID, 6);
 
-    uint16_t pos = 28;
+    /* pwngrid IEs start directly after the MAC header (offset 24),
+     * matching the format used by real pwnagotchi peers. */
+    uint16_t pos = 24;
 
     /* IE 226 (0xE2): stream header – streamID(8) + seqNum(8) + seqTot(8) */
     frame[pos++] = IE_PWNGRID_STREAM_HDR;
