@@ -38,8 +38,8 @@ PWNAGOTCHI_FACES = [
 ]
 
 # Heuristics for suspicious advertisement behavior
-RAPID_ADVERTISEMENT_INTERVAL = 1.0
-AIRTAG_RAPID_INTERVAL = 0.5
+RAPID_ADVERTISEMENT_INTERVAL = 0.3
+AIRTAG_RAPID_INTERVAL = 0.3
 MAX_AIRTAG_MINIMAL_PAYLOAD_LENGTH = 4
 
 # FlipperZero signatures (Wall of Flippers + common spoof payload patterns)
@@ -53,6 +53,17 @@ FLIPPER_PAYLOAD_PATTERNS = {
     b"\x81\x30": "Black",
     b"\x82\x30": "White",
     b"\x83\x30": "Transparent/Orange",
+}
+
+# LightBlue BLE Explorer app (commonly used for BLE reconnaissance)
+LIGHTBLUE_SERVICE_UUID = "deadf154-0000-0000-0000-0000deadf154"
+
+# CatHack / Apple Juice BLE attack service UUIDs
+CATHACK_SERVICE_UUIDS = {
+    "d0611e78-bbb4-4591-a5f8-487910ae4366": "CatHack variant 0",
+    "9fa480e0-4967-4542-9390-d343dc5d04ae": "CatHack variant 1",
+    "7905f431-b5ce-4e99-a40f-4b1e122d00d0": "CatHack variant 2",
+    "89d3502b-0f36-433a-8ef4-c502ad55f8dc": "CatHack variant 3",
 }
 
 APPLE_COMPANY_ID = 0x004C
@@ -190,5 +201,15 @@ BLE_SIGNATURES = {
     "tile_spoofing": {
         "family": "spoofing",
         "description": "Spoofed Tile advertisement signature",
+    },
+    "lightblue_recon": {
+        "family": "pentest_tool",
+        "description": "LightBlue BLE Explorer app (recon tool)",
+        "sources": ["GhostBLE"],
+    },
+    "cathack_apple_juice": {
+        "family": "spoofing",
+        "description": "CatHack / Apple Juice BLE attack tool",
+        "sources": ["GhostBLE"],
     },
 }

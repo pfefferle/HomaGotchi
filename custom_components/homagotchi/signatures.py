@@ -17,10 +17,12 @@ from .const import (
     APPLE_POPUP_CORE,
     APPLE_POPUP_PREFIX,
     APPLE_SETUP_PREFIX,
+    CATHACK_SERVICE_UUIDS,
     FLIPPER_PAYLOAD_PATTERNS,
     FLIPPER_SERVICE_UUIDS,
     GOOGLE_FAST_PAIR_MARKER,
     GOOGLE_FAST_PAIR_PAYLOAD_TAIL,
+    LIGHTBLUE_SERVICE_UUID,
     MAX_AIRTAG_MINIMAL_PAYLOAD_LENGTH,
     MICROSOFT_COMPANY_ID,
     MICROSOFT_SWIFT_PAIR_PAYLOAD_PREFIX,
@@ -110,6 +112,31 @@ def match_ble_signatures(
                     {
                         "service_uuid": service_uuid,
                         "flipper_color": color,
+                        "method": "service_uuid",
+                    },
+                )
+
+    # LightBlue BLE Explorer (recon tool)
+    for service_uuid in service_info.service_uuids or []:
+        if service_uuid.lower() == LIGHTBLUE_SERVICE_UUID:
+            add_match(
+                "lightblue_recon",
+                {
+                    "service_uuid": service_uuid,
+                    "method": "service_uuid",
+                },
+            )
+
+    # CatHack / Apple Juice attack UUIDs
+    for service_uuid in service_info.service_uuids or []:
+        service_uuid_lower = service_uuid.lower()
+        for expected_uuid, variant in CATHACK_SERVICE_UUIDS.items():
+            if service_uuid_lower == expected_uuid.lower():
+                add_match(
+                    "cathack_apple_juice",
+                    {
+                        "service_uuid": service_uuid,
+                        "variant": variant,
                         "method": "service_uuid",
                     },
                 )
@@ -206,8 +233,10 @@ def match_ble_signatures(
                 )
 
             # Broader continuity heuristics for unknown/spoofed variants.
+            # Require BOTH rapid advertising AND name mismatch to reduce
+            # false positives from legitimate Apple devices.
             if any(payload_bytes.startswith(prefix) for prefix in APPLE_CONTINUITY_PREFIXES):
-                if rapid_adv or not _name_matches_hints(service_info.name, APPLE_NAME_HINTS):
+                if rapid_adv and not _name_matches_hints(service_info.name, APPLE_NAME_HINTS):
                     add_match(
                         "apple_continuity_spoofing",
                         {
@@ -226,7 +255,7 @@ def match_ble_signatures(
                 minimal_payload = len(payload_bytes) <= MAX_AIRTAG_MINIMAL_PAYLOAD_LENGTH
                 if minimal_payload and (
                     rapid_airtag
-                    or not _name_matches_hints(service_info.name, APPLE_NAME_HINTS)
+                    and not _name_matches_hints(service_info.name, APPLE_NAME_HINTS)
                 ):
                     add_match(
                         "airtag_spoofing",
@@ -247,14 +276,15 @@ def match_ble_signatures(
                         "method": "manufacturer_data",
                     },
                 )
-            if rapid_adv or not _name_matches_hints(service_info.name, MICROSOFT_NAME_HINTS):
-                add_match(
-                    "microsoft_swift_pair_spoofing",
-                    {
-                        "company_id": hex(company_id),
-                        "method": "manufacturer_data",
-                    },
-                )
+                # Only flag spoofing for Swift Pair payloads (not all Microsoft ads)
+                if rapid_adv and not _name_matches_hints(service_info.name, MICROSOFT_NAME_HINTS):
+                    add_match(
+                        "microsoft_swift_pair_spoofing",
+                        {
+                            "company_id": hex(company_id),
+                            "method": "manufacturer_data",
+                        },
+                    )
 
         if company_id == SAMSUNG_COMPANY_ID:
             if payload_bytes.startswith(SAMSUNG_WATCH_PAYLOAD_PREFIX):
@@ -275,7 +305,7 @@ def match_ble_signatures(
                         "method": "manufacturer_data",
                     },
                 )
-            if rapid_adv or not _name_matches_hints(service_info.name, SAMSUNG_NAME_HINTS):
+            if rapid_adv and not _name_matches_hints(service_info.name, SAMSUNG_NAME_HINTS):
                 add_match(
                     "samsung_smarttag_spoofing",
                     {
@@ -300,7 +330,7 @@ def match_ble_signatures(
                 )
 
     if any(GOOGLE_FAST_PAIR_MARKER in marker for marker in service_markers) and (
-        rapid_adv or not _name_matches_hints(service_info.name, GOOGLE_NAME_HINTS)
+        rapid_adv and not _name_matches_hints(service_info.name, GOOGLE_NAME_HINTS)
     ):
         add_match(
             "google_fast_pair_spoofing",
@@ -311,7 +341,7 @@ def match_ble_signatures(
         )
 
     if any(TILE_MARKER in marker for marker in service_markers) and (
-        rapid_adv or not _name_matches_hints(service_info.name, TILE_NAME_HINTS)
+        rapid_adv and not _name_matches_hints(service_info.name, TILE_NAME_HINTS)
     ):
         add_match(
             "tile_spoofing",
