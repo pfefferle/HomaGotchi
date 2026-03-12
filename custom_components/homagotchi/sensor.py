@@ -267,7 +267,17 @@ class EventStreakSensor(SensorEntity):
     def _state(self) -> dict:
         return self.hass.data[DOMAIN]["state"]
 
+    def _any_sensor_active(self) -> bool:
+        """Return True if any watched binary sensor is currently on."""
+        for entity_id in _WATCHED_SENSORS:
+            state = self.hass.states.get(entity_id)
+            if state is not None and state.state == "on":
+                return True
+        return False
+
     def _streak_seconds(self) -> int:
+        if self._any_sensor_active():
+            return 0
         last = self._state[STATE_LAST_INCIDENT]
         ref = last if last is not None else self._state[STATE_STARTED_AT]
         return int((datetime.now() - ref).total_seconds())
