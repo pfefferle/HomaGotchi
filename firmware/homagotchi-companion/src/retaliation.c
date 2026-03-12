@@ -233,18 +233,20 @@ void retaliation_fire(uint16_t flags)
     /* Always send a gotchi identity beacon when retaliating */
     send_gotchi_beacon();
 
-    /* Pick SSIDs based on what was detected */
+    /* Pick SSIDs based on what was detected.
+     * More specific flags (pwnagotchi, evil twin) are checked before
+     * generic ones (deauth) so they aren't shadowed by co-occurring flags. */
     for (int i = 0; i < burst; i++) {
         random_mac(mac);
 
-        if (flags & HG_FLAG_DEAUTH) {
-            ssid = pick_ssid(SSIDS_DEAUTH, NUM_SSIDS_DEAUTH);
-        } else if (flags & HG_FLAG_PWNAGOTCHI) {
+        if (flags & HG_FLAG_PWNAGOTCHI) {
             ssid = pick_ssid(SSIDS_PWNAGOTCHI, NUM_SSIDS_PWNAGOTCHI);
         } else if (flags & HG_FLAG_EVIL_TWIN) {
             ssid = pick_ssid(SSIDS_EVIL_TWIN, NUM_SSIDS_EVIL_TWIN);
         } else if (flags & HG_FLAG_PINEAPPLE) {
             ssid = pick_ssid(SSIDS_FLIPPER, NUM_SSIDS_FLIPPER);
+        } else if (flags & HG_FLAG_DEAUTH) {
+            ssid = pick_ssid(SSIDS_DEAUTH, NUM_SSIDS_DEAUTH);
         } else {
             ssid = pick_ssid(SSIDS_GENERIC, NUM_SSIDS_GENERIC);
         }
