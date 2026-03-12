@@ -273,14 +273,17 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     uint8_t ssid_len = ie_get_ssid(ie_start, ie_len, ssid, sizeof(ssid));
 
     /* Pwnagotchi detection */
-    if (is_pwnagotchi_beacon(src_addr, ie_start, ie_len)) {
+    bool is_pwn = is_pwnagotchi_beacon(src_addr, ie_start, ie_len);
+    if (is_pwn) {
         portENTER_CRITICAL_ISR(&s_counter_mux);
         s_flags |= HG_FLAG_PWNAGOTCHI;
         portEXIT_CRITICAL_ISR(&s_counter_mux);
     }
 
-    /* Pineapple OUI detection */
-    if (is_pineapple_oui(src_addr)) {
+    /* Pineapple OUI detection — skip if already identified as pwnagotchi,
+     * since the well-known pwnagotchi MAC (DE:AD:BE:...) matches the
+     * spoofed/unassigned OUI entry. */
+    if (!is_pwn && is_pineapple_oui(src_addr)) {
         portENTER_CRITICAL_ISR(&s_counter_mux);
         s_flags |= HG_FLAG_PINEAPPLE;
         portEXIT_CRITICAL_ISR(&s_counter_mux);
