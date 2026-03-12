@@ -41,6 +41,9 @@ static const char *TAG = "sniffer";
 /* Pwnagotchi broadcasts from this well-known source MAC */
 static const uint8_t PWNAGOTCHI_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
 
+/* Our own beacon MAC — ignore to avoid self-detection */
+static const uint8_t SELF_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+
 /* ── Suspicious OUIs (first 3 bytes of MAC) for pineapple detection ───────── */
 
 typedef struct {
@@ -117,18 +120,39 @@ static bool is_pineapple_oui(const uint8_t *mac)
 }
 
 /**
- * Check whether a beacon is from a pwnagotchi.
+ * Check whether a management frame is from a pwnagotchi.
  *
- * Primary: pwnagotchi uses the well-known source MAC DE:AD:BE:EF:DE:AD.
- * Fallback: scan the frame body for pwnagotchi JSON keys ("pwnd_tot",
- * "identity") in case a fork uses a different MAC.
+ * Detection methods:
+ *   1. Well-known source MAC DE:AD:BE:EF:DE:AD.
+ *   2. pwngrid custom IE tags 222-226 (0xDE-0xE2) — unique to pwnagotchi.
+ *      The payload is gzip-compressed, so raw JSON string search won't work.
+ *   3. Uncompressed JSON fallback for forks that don't use pwngrid.
  */
 static bool is_pwnagotchi_beacon(const uint8_t *src_mac,
                                   const uint8_t *ie, uint16_t ie_len)
 {
+    /* Method 1: well-known pwnagotchi MAC */
     if (memcmp(src_mac, PWNAGOTCHI_MAC, 6) == 0) {
         return true;
     }
+
+    /* Method 2: pwngrid custom IE tags (222=payload, 223=compression,
+     * 224=identity, 225=signature, 226=stream header) */
+    uint16_t pos = 0;
+    while (pos + 2 <= ie_len) {
+        uint8_t tag = ie[pos];
+        uint8_t len = ie[pos + 1];
+        pos += 2;
+        if (pos + len > ie_len) {
+            break;
+        }
+        if (tag >= 222 && tag <= 226) {
+            return true;  /* pwngrid-specific IE found */
+        }
+        pos += len;
+    }
+
+    /* Method 3: plaintext JSON fallback (older or non-pwngrid forks) */
     if (mem_contains(ie, ie_len, "pwnd_tot") ||
         mem_contains(ie, ie_len, "\"identity\"")) {
         return true;
@@ -259,6 +283,27 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         return;
     }
 
+    /* ── Pwnagotchi scan across ALL management frame types ──────────────── */
+    /* Pwnagotchi identity might arrive as beacon, probe response, or other.
+     * Scan any management frame large enough to have an IE section. */
+    if (frame_len > BEACON_IE_OFFSET) {
+        const uint8_t *any_src = &frame[10];
+        /* Skip our own frames */
+        if (memcmp(any_src, SELF_MAC, 6) != 0) {
+            const uint8_t *any_ie = &frame[BEACON_IE_OFFSET];
+            uint16_t any_ie_len = frame_len - BEACON_IE_OFFSET;
+            if (is_pwnagotchi_beacon(any_src, any_ie, any_ie_len)) {
+                ESP_LOGW(TAG, "PWNAGOTCHI in mgmt subtype=0x%02X from "
+                         "%02X:%02X:%02X:%02X:%02X:%02X",
+                         subtype, any_src[0], any_src[1], any_src[2],
+                         any_src[3], any_src[4], any_src[5]);
+                portENTER_CRITICAL_ISR(&s_counter_mux);
+                s_flags |= HG_FLAG_PWNAGOTCHI;
+                portEXIT_CRITICAL_ISR(&s_counter_mux);
+            }
+        }
+    }
+
     /* ── Beacon analysis ──────────────────────────────────────────────────── */
     if (subtype != SUBTYPE_BEACON || frame_len <= BEACON_IE_OFFSET) {
         return;
@@ -269,16 +314,17 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
     const uint8_t *ie_start = &frame[BEACON_IE_OFFSET];
     uint16_t       ie_len   = frame_len - BEACON_IE_OFFSET;
 
+    /* Skip our own beacons to avoid self-detection */
+    if (memcmp(src_addr, SELF_MAC, 6) == 0) {
+        return;
+    }
+
     char ssid[HG_MAX_SSID_LEN + 1] = {0};
     uint8_t ssid_len = ie_get_ssid(ie_start, ie_len, ssid, sizeof(ssid));
 
-    /* Pwnagotchi detection */
+    /* Pwnagotchi detection (already handled above for all mgmt frames,
+     * but we still need the is_pwn flag to skip pineapple OUI check) */
     bool is_pwn = is_pwnagotchi_beacon(src_addr, ie_start, ie_len);
-    if (is_pwn) {
-        portENTER_CRITICAL_ISR(&s_counter_mux);
-        s_flags |= HG_FLAG_PWNAGOTCHI;
-        portEXIT_CRITICAL_ISR(&s_counter_mux);
-    }
 
     /* Pineapple OUI detection — skip if already identified as pwnagotchi,
      * since the well-known pwnagotchi MAC (DE:AD:BE:...) matches the
@@ -336,10 +382,16 @@ void wifi_sniffer_init(void)
     ESP_LOGI(TAG, "Promiscuous mode active on channel %d", s_channel);
 }
 
-void wifi_sniffer_hop(void)
+uint8_t wifi_sniffer_hop(void)
 {
     s_channel = (s_channel % HG_MAX_CHANNEL) + 1;
     esp_wifi_set_channel(s_channel, WIFI_SECOND_CHAN_NONE);
+    return s_channel;
+}
+
+uint8_t wifi_sniffer_channel(void)
+{
+    return s_channel;
 }
 
 bool wifi_sniffer_has_alert(void)

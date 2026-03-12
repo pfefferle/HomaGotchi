@@ -38,6 +38,10 @@ static void monitor_task(void *arg)
         if ((now - last_hop) * portTICK_PERIOD_MS >= HG_CHANNEL_HOP_MS) {
             last_hop = now;
             wifi_sniffer_hop();
+
+            /* Send our pwngrid identity on every channel hop so peers
+             * can discover us regardless of what channel they're on. */
+            retaliation_send_gotchi_beacon();
         }
 
         bool interval_elapsed =

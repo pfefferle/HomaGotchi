@@ -37,6 +37,7 @@ from .const import (
     DEFAULT_INTENSITY_WINDOW,
     DEFAULT_WIFI_DEAUTH_THRESHOLD,
     DOMAIN,
+    EVENT_DETECTION,
     FLAG_BEACON_SPAM,
     FLAG_DEAUTH,
     FLAG_EVIL_TWIN,
@@ -219,6 +220,10 @@ class _BaseBleActivitySensor(BinarySensorEntity):
                 self._intensity_threshold,
             )
 
+        self.hass.bus.async_fire(EVENT_DETECTION, {
+            "detector": self._detector_type,
+            "is_on": self._attr_is_on,
+        })
         self.async_write_ha_state()
 
     def _filter_matches(self, matches: list[SignatureMatch]) -> list[SignatureMatch]:
@@ -262,6 +267,10 @@ class _BaseBleActivitySensor(BinarySensorEntity):
             idle_for,
         )
         self._reset_detection_state()
+        self.hass.bus.async_fire(EVENT_DETECTION, {
+            "detector": self._detector_type,
+            "is_on": False,
+        })
         self.async_write_ha_state()
 
     def _reset_detection_state(self) -> None:
@@ -559,6 +568,10 @@ class CompanionWifiSensor(BinarySensorEntity):
             self._attr_is_on = True
             self._last_detection_time = now
             _LOGGER.warning("'%s' triggered (from %s)", self._attr_name, name)
+            self.hass.bus.async_fire(EVENT_DETECTION, {
+                "detector": self._attr_unique_id,
+                "is_on": True,
+            })
             self.async_write_ha_state()
         elif triggered:
             self._last_detection_time = now
@@ -585,6 +598,10 @@ class CompanionWifiSensor(BinarySensorEntity):
         self._total_deauth = 0
         self._total_disassoc = 0
         self._last_detection_time = None
+        self.hass.bus.async_fire(EVENT_DETECTION, {
+            "detector": self._attr_unique_id,
+            "is_on": False,
+        })
         self.async_write_ha_state()
 
     def _build_summary(self) -> str:

@@ -144,6 +144,9 @@ STATE_FRIEND_ENCOUNTERS = "friend_encounters"
 STATE_STARTED_AT = "started_at"
 STATE_LAST_INCIDENT = "last_incident"
 
+# Custom event fired by binary sensors when detection state changes
+EVENT_DETECTION = f"{DOMAIN}_detection"
+
 # Heuristics for suspicious advertisement behavior
 RAPID_ADVERTISEMENT_INTERVAL = 0.3
 AIRTAG_RAPID_INTERVAL = 0.3

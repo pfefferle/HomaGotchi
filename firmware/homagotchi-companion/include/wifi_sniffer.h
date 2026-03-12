@@ -19,8 +19,11 @@ typedef struct {
 /** Initialise WiFi in promiscuous mode on channel 1. */
 void wifi_sniffer_init(void);
 
-/** Hop to the next channel (wraps at HG_MAX_CHANNEL). */
-void wifi_sniffer_hop(void);
+/** Hop to the next channel (wraps at HG_MAX_CHANNEL). Returns new channel. */
+uint8_t wifi_sniffer_hop(void);
+
+/** Return the current WiFi channel. */
+uint8_t wifi_sniffer_channel(void);
 
 /**
  * Collect accumulated detections and reset the counters.

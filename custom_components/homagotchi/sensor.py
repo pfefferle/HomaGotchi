@@ -10,13 +10,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import (
-    async_track_state_change_event,
-    async_track_time_interval,
-)
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     DOMAIN,
+    EVENT_DETECTION,
     STATE_FRIEND_COUNT,
     STATE_FRIEND_ENCOUNTERS,
     STATE_LAST_INCIDENT,
@@ -27,20 +25,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Binary sensor entity IDs to watch for XP / streak events.
-_WATCHED_SENSORS = [
-    f"binary_sensor.{DOMAIN}_ble_spam",
-    f"binary_sensor.{DOMAIN}_pentest",
-    f"binary_sensor.{DOMAIN}_deauth",
-    f"binary_sensor.{DOMAIN}_evil_twin",
-    f"binary_sensor.{DOMAIN}_pwnagotchi",
-    f"binary_sensor.{DOMAIN}_beacon_spam",
-    f"binary_sensor.{DOMAIN}_probe_flood",
-    f"binary_sensor.{DOMAIN}_karma",
-    f"binary_sensor.{DOMAIN}_pineapple",
-]
-
-_PWNAGOTCHI_SENSOR = f"binary_sensor.{DOMAIN}_pwnagotchi"
+# Detector IDs that count as pwnagotchi friend encounters.
+_PWNAGOTCHI_DETECTORS = {f"{DOMAIN}_pwnagotchi"}
 
 
 def _format_duration(seconds: int) -> str:
@@ -113,8 +99,8 @@ class ExperienceLevelSensor(SensorEntity):
         return attrs
 
     async def async_added_to_hass(self) -> None:
-        self._cancel_listener = async_track_state_change_event(
-            self.hass, _WATCHED_SENSORS, self._on_detection,
+        self._cancel_listener = self.hass.bus.async_listen(
+            EVENT_DETECTION, self._on_detection,
         )
 
     async def async_will_remove_from_hass(self) -> None:
@@ -124,8 +110,7 @@ class ExperienceLevelSensor(SensorEntity):
 
     @callback
     def _on_detection(self, event: Event) -> None:
-        new_state = event.data.get("new_state")
-        if new_state is None or new_state.state != "on":
+        if not event.data.get("is_on"):
             return
         self._state[STATE_TOTAL_XP] += 1
         self.async_write_ha_state()
@@ -168,8 +153,8 @@ class FriendsMetSensor(SensorEntity):
         return attrs
 
     async def async_added_to_hass(self) -> None:
-        self._cancel_listener = async_track_state_change_event(
-            self.hass, [_PWNAGOTCHI_SENSOR], self._on_pwnagotchi,
+        self._cancel_listener = self.hass.bus.async_listen(
+            EVENT_DETECTION, self._on_detection,
         )
 
     async def async_will_remove_from_hass(self) -> None:
@@ -178,9 +163,11 @@ class FriendsMetSensor(SensorEntity):
             self._cancel_listener = None
 
     @callback
-    def _on_pwnagotchi(self, event: Event) -> None:
-        new_state = event.data.get("new_state")
-        if new_state is None or new_state.state != "on":
+    def _on_detection(self, event: Event) -> None:
+        if not event.data.get("is_on"):
+            return
+        detector = event.data.get("detector", "")
+        if detector not in _PWNAGOTCHI_DETECTORS:
             return
         now = datetime.now().isoformat()
         self._state[STATE_FRIEND_COUNT] += 1
@@ -255,6 +242,7 @@ class EventStreakSensor(SensorEntity):
         self._attr_unique_id = f"{DOMAIN}_streak"
         self._cancel_listener = None
         self._cancel_timer = None
+        self._active_detectors: set[str] = set()
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -267,16 +255,8 @@ class EventStreakSensor(SensorEntity):
     def _state(self) -> dict:
         return self.hass.data[DOMAIN]["state"]
 
-    def _any_sensor_active(self) -> bool:
-        """Return True if any watched binary sensor is currently on."""
-        for entity_id in _WATCHED_SENSORS:
-            state = self.hass.states.get(entity_id)
-            if state is not None and state.state == "on":
-                return True
-        return False
-
     def _streak_seconds(self) -> int:
-        if self._any_sensor_active():
+        if self._active_detectors:
             return 0
         last = self._state[STATE_LAST_INCIDENT]
         ref = last if last is not None else self._state[STATE_STARTED_AT]
@@ -295,8 +275,8 @@ class EventStreakSensor(SensorEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        self._cancel_listener = async_track_state_change_event(
-            self.hass, _WATCHED_SENSORS, self._on_detection,
+        self._cancel_listener = self.hass.bus.async_listen(
+            EVENT_DETECTION, self._on_detection,
         )
         self._cancel_timer = async_track_time_interval(
             self.hass, self._update, timedelta(seconds=60),
@@ -312,10 +292,13 @@ class EventStreakSensor(SensorEntity):
 
     @callback
     def _on_detection(self, event: Event) -> None:
-        new_state = event.data.get("new_state")
-        if new_state is None or new_state.state != "on":
-            return
-        self._state[STATE_LAST_INCIDENT] = datetime.now()
+        detector = event.data.get("detector", "")
+        is_on = event.data.get("is_on", False)
+        if is_on:
+            self._active_detectors.add(detector)
+            self._state[STATE_LAST_INCIDENT] = datetime.now()
+        else:
+            self._active_detectors.discard(detector)
         self.async_write_ha_state()
 
     @callback

@@ -11,13 +11,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import (
-    async_track_state_change_event,
-    async_track_time_interval,
-)
+from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
     DOMAIN,
+    EVENT_DETECTION,
     FACE_ALERT_BLE_SPAM,
     FACE_ALERT_DEAUTH,
     FACE_ALERT_EVIL_TWIN,
@@ -27,51 +25,49 @@ from .const import (
     FACE_IDLE,
     FACE_MONITORING,
     PWNAGOTCHI_FACES,
-    QUIP_MAP,
+    QUIPS_BEACON_SPAM,
+    QUIPS_BLE_SPAM,
+    QUIPS_DEAUTH,
+    QUIPS_EVIL_TWIN,
+    QUIPS_FLIPPER,
     QUIPS_IDLE,
+    QUIPS_KARMA,
     QUIPS_MULTI,
+    QUIPS_PINEAPPLE,
+    QUIPS_PROBE_FLOOD,
+    QUIPS_PWNAGOTCHI,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Entity IDs of the binary sensors both text entities react to.
-_SENSOR_MOOD_MAP = {
-    f"binary_sensor.{DOMAIN}_ble_spam": FACE_ALERT_BLE_SPAM,
-    f"binary_sensor.{DOMAIN}_pentest": FACE_ALERT_FLIPPER,
-    f"binary_sensor.{DOMAIN}_deauth": FACE_ALERT_DEAUTH,
-    f"binary_sensor.{DOMAIN}_evil_twin": FACE_ALERT_EVIL_TWIN,
-    f"binary_sensor.{DOMAIN}_pwnagotchi": FACE_ALERT_PWNAGOTCHI,
-    f"binary_sensor.{DOMAIN}_beacon_spam": FACE_ALERT_BLE_SPAM,
-    f"binary_sensor.{DOMAIN}_probe_flood": FACE_ALERT_BLE_SPAM,
-    f"binary_sensor.{DOMAIN}_karma": FACE_ALERT_EVIL_TWIN,
-    f"binary_sensor.{DOMAIN}_pineapple": FACE_ALERT_FLIPPER,
+# Map detector IDs (from EVENT_DETECTION events) to face mood indices.
+_DETECTOR_FACE_MAP: dict[str, list[int]] = {
+    "spam_activity": FACE_ALERT_BLE_SPAM,
+    "presence": FACE_ALERT_FLIPPER,
+    f"{DOMAIN}_deauth": FACE_ALERT_DEAUTH,
+    f"{DOMAIN}_evil_twin": FACE_ALERT_EVIL_TWIN,
+    f"{DOMAIN}_pwnagotchi": FACE_ALERT_PWNAGOTCHI,
+    f"{DOMAIN}_beacon_spam": FACE_ALERT_BLE_SPAM,
+    f"{DOMAIN}_probe_flood": FACE_ALERT_BLE_SPAM,
+    f"{DOMAIN}_karma": FACE_ALERT_EVIL_TWIN,
+    f"{DOMAIN}_pineapple": FACE_ALERT_FLIPPER,
+}
+
+# Map detector IDs to quip pools.
+_DETECTOR_QUIP_MAP: dict[str, list[str]] = {
+    "spam_activity": QUIPS_BLE_SPAM,
+    "presence": QUIPS_FLIPPER,
+    f"{DOMAIN}_deauth": QUIPS_DEAUTH,
+    f"{DOMAIN}_evil_twin": QUIPS_EVIL_TWIN,
+    f"{DOMAIN}_pwnagotchi": QUIPS_PWNAGOTCHI,
+    f"{DOMAIN}_beacon_spam": QUIPS_BEACON_SPAM,
+    f"{DOMAIN}_probe_flood": QUIPS_PROBE_FLOOD,
+    f"{DOMAIN}_karma": QUIPS_KARMA,
+    f"{DOMAIN}_pineapple": QUIPS_PINEAPPLE,
 }
 
 
-def _suffix_from_entity_id(entity_id: str) -> str:
-    """Extract the sensor suffix from a full entity ID."""
-    prefix = f"binary_sensor.{DOMAIN}_"
-    if entity_id.startswith(prefix):
-        return entity_id[len(prefix):]
-    return ""
-
-
-class _ActiveSensorMixin:
-    """Shared helper for checking active binary sensors."""
-
-    hass: HomeAssistant
-
-    def _get_active_sensors(self) -> list[str]:
-        """Return entity IDs of sensors currently in 'on' state."""
-        active = []
-        for entity_id in _SENSOR_MOOD_MAP:
-            state = self.hass.states.get(entity_id)
-            if state is not None and state.state == "on":
-                active.append(entity_id)
-        return active
-
-
-class PwnagotchiFaceText(_ActiveSensorMixin, TextEntity):
+class PwnagotchiFaceText(TextEntity):
     """Reactive text face that reflects current detection state."""
 
     _attr_has_entity_name = True
@@ -87,6 +83,7 @@ class PwnagotchiFaceText(_ActiveSensorMixin, TextEntity):
         self._cancel_timer = None
         self._cancel_listener = None
         self._manual_override = False
+        self._active_detectors: set[str] = set()
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -96,10 +93,8 @@ class PwnagotchiFaceText(_ActiveSensorMixin, TextEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        self._cancel_listener = async_track_state_change_event(
-            self.hass,
-            list(_SENSOR_MOOD_MAP.keys()),
-            self._on_sensor_change,
+        self._cancel_listener = self.hass.bus.async_listen(
+            EVENT_DETECTION, self._on_detection,
         )
         self._cancel_timer = async_track_time_interval(
             self.hass,
@@ -119,17 +114,26 @@ class PwnagotchiFaceText(_ActiveSensorMixin, TextEntity):
         return PWNAGOTCHI_FACES[random.choice(indices)]
 
     @callback
-    def _on_sensor_change(self, event: Event) -> None:
-        self._manual_override = False
-        active = self._get_active_sensors()
+    def _on_detection(self, event: Event) -> None:
+        detector = event.data.get("detector", "")
+        is_on = event.data.get("is_on", False)
 
-        if not active:
+        if detector not in _DETECTOR_FACE_MAP:
+            return
+
+        if is_on:
+            self._active_detectors.add(detector)
+        else:
+            self._active_detectors.discard(detector)
+
+        self._manual_override = False
+
+        if not self._active_detectors:
             self._attr_native_value = self._pick_face(FACE_MONITORING)
-        elif len(active) >= 3:
+        elif len(self._active_detectors) >= 3:
             self._attr_native_value = self._pick_face(FACE_ALERT_MULTI)
         else:
-            entity_id = event.data.get("entity_id", active[0])
-            indices = _SENSOR_MOOD_MAP.get(entity_id, FACE_ALERT_BLE_SPAM)
+            indices = _DETECTOR_FACE_MAP.get(detector, FACE_ALERT_BLE_SPAM)
             self._attr_native_value = self._pick_face(indices)
 
         self.async_write_ha_state()
@@ -140,14 +144,13 @@ class PwnagotchiFaceText(_ActiveSensorMixin, TextEntity):
         if self._manual_override:
             return
 
-        active = self._get_active_sensors()
-        if not active:
+        if not self._active_detectors:
             self._attr_native_value = self._pick_face(FACE_IDLE)
-        elif len(active) >= 3:
+        elif len(self._active_detectors) >= 3:
             self._attr_native_value = self._pick_face(FACE_ALERT_MULTI)
         else:
-            entity_id = random.choice(active)
-            indices = _SENSOR_MOOD_MAP.get(entity_id, FACE_ALERT_BLE_SPAM)
+            detector = random.choice(list(self._active_detectors))
+            indices = _DETECTOR_FACE_MAP.get(detector, FACE_ALERT_BLE_SPAM)
             self._attr_native_value = self._pick_face(indices)
 
         self.async_write_ha_state()
@@ -158,7 +161,7 @@ class PwnagotchiFaceText(_ActiveSensorMixin, TextEntity):
         self.async_write_ha_state()
 
 
-class PwnagotchiQuipText(_ActiveSensorMixin, TextEntity):
+class PwnagotchiQuipText(TextEntity):
     """Witty status messages reacting to detections."""
 
     _attr_has_entity_name = True
@@ -174,6 +177,7 @@ class PwnagotchiQuipText(_ActiveSensorMixin, TextEntity):
         self._cancel_timer = None
         self._cancel_listener = None
         self._manual_override = False
+        self._active_detectors: set[str] = set()
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -183,10 +187,8 @@ class PwnagotchiQuipText(_ActiveSensorMixin, TextEntity):
         )
 
     async def async_added_to_hass(self) -> None:
-        self._cancel_listener = async_track_state_change_event(
-            self.hass,
-            list(_SENSOR_MOOD_MAP.keys()),
-            self._on_sensor_change,
+        self._cancel_listener = self.hass.bus.async_listen(
+            EVENT_DETECTION, self._on_detection,
         )
         self._cancel_timer = async_track_time_interval(
             self.hass,
@@ -203,18 +205,26 @@ class PwnagotchiQuipText(_ActiveSensorMixin, TextEntity):
             self._cancel_timer = None
 
     @callback
-    def _on_sensor_change(self, event: Event) -> None:
-        self._manual_override = False
-        active = self._get_active_sensors()
+    def _on_detection(self, event: Event) -> None:
+        detector = event.data.get("detector", "")
+        is_on = event.data.get("is_on", False)
 
-        if not active:
+        if detector not in _DETECTOR_QUIP_MAP:
+            return
+
+        if is_on:
+            self._active_detectors.add(detector)
+        else:
+            self._active_detectors.discard(detector)
+
+        self._manual_override = False
+
+        if not self._active_detectors:
             self._attr_native_value = random.choice(QUIPS_IDLE)
-        elif len(active) >= 3:
+        elif len(self._active_detectors) >= 3:
             self._attr_native_value = random.choice(QUIPS_MULTI)
         else:
-            entity_id = event.data.get("entity_id", active[0])
-            suffix = _suffix_from_entity_id(entity_id)
-            quips = QUIP_MAP.get(suffix, QUIPS_IDLE)
+            quips = _DETECTOR_QUIP_MAP.get(detector, QUIPS_IDLE)
             self._attr_native_value = random.choice(quips)
 
         self.async_write_ha_state()
@@ -225,15 +235,13 @@ class PwnagotchiQuipText(_ActiveSensorMixin, TextEntity):
         if self._manual_override:
             return
 
-        active = self._get_active_sensors()
-        if not active:
+        if not self._active_detectors:
             self._attr_native_value = random.choice(QUIPS_IDLE)
-        elif len(active) >= 3:
+        elif len(self._active_detectors) >= 3:
             self._attr_native_value = random.choice(QUIPS_MULTI)
         else:
-            entity_id = random.choice(active)
-            suffix = _suffix_from_entity_id(entity_id)
-            quips = QUIP_MAP.get(suffix, QUIPS_IDLE)
+            detector = random.choice(list(self._active_detectors))
+            quips = _DETECTOR_QUIP_MAP.get(detector, QUIPS_IDLE)
             self._attr_native_value = random.choice(quips)
 
         self.async_write_ha_state()

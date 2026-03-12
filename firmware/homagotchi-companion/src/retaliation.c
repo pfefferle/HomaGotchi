@@ -26,10 +26,21 @@ static const char *TAG = "retaliate";
 /* Source MAC for our pwnagotchi-style beacon */
 static const uint8_t GOTCHI_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
 
-/* JSON identity payload embedded in a vendor-specific IE */
+/* JSON identity payload (pwngrid format) */
 static const char GOTCHI_IDENTITY[] =
-    "{\"name\":\"HomaGotchi\",\"identity\":\"homagotchi\","
-    "\"pwnd_tot\":0,\"version\":\"0.5.0\"}";
+    "{\"name\":\"HomaGotchi\",\"version\":\"0.5.0\","
+    "\"identity\":\"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\","
+    "\"epoch\":1,\"pwnd_run\":0,\"pwnd_tot\":0,"
+    "\"uptime\":0,\"face\":\"(◕‿‿◕)\"}";
+
+/* pwngrid IE tag numbers */
+#define IE_PWNGRID_PAYLOAD      222  /* 0xDE – JSON payload chunks */
+#define IE_PWNGRID_IDENTITY     224  /* 0xE0 – peer identity fingerprint */
+#define IE_PWNGRID_STREAM_HDR   226  /* 0xE2 – stream header */
+
+/* Fake identity fingerprint (64 hex chars = 32 bytes as ASCII) */
+static const char GOTCHI_FINGERPRINT[] =
+    "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
 
 /* ── Funny SSID pools (picked by threat type) ─────────────────────────────── */
 
@@ -152,45 +163,83 @@ static void send_beacon(const char *ssid, const uint8_t *src_mac)
  */
 void retaliation_send_gotchi_beacon(void)
 {
-    const char *ssid = "HomaGotchi";
-    uint8_t ssid_len = (uint8_t)strlen(ssid);
     uint8_t json_len = (uint8_t)strlen(GOTCHI_IDENTITY);
+    uint8_t fp_len = (uint8_t)strlen(GOTCHI_FINGERPRINT);
 
-    uint8_t frame[256];
+    /*
+     * pwngrid uses 802.11 Action frames (type=0, subtype=13) with custom
+     * Information Elements (IE tags 222-226) for peer advertisement.
+     *
+     * Action frame layout:
+     *   [0..1]   Frame control (0xD0 0x00 = action)
+     *   [2..3]   Duration
+     *   [4..9]   Destination (broadcast)
+     *   [10..15] Source address
+     *   [16..21] BSSID
+     *   [22..23] Sequence control
+     *   [24]     Category (127 = vendor-specific)
+     *   [25..27] OUI
+     *   [28+]    Tagged parameters (pwngrid IEs)
+     */
+
+    uint8_t frame[512];
     memset(frame, 0, sizeof(frame));
 
-    frame[0] = 0x80;
+    /* Frame control: Action frame */
+    frame[0] = 0xD0;
     frame[1] = 0x00;
+
+    /* Destination: broadcast */
     memset(&frame[4], 0xFF, 6);
+
+    /* Source address + BSSID */
     memcpy(&frame[10], GOTCHI_MAC, 6);
     memcpy(&frame[16], GOTCHI_MAC, 6);
-    frame[32] = 0x64;
-    frame[33] = 0x00;
-    frame[34] = 0x01;
-    frame[35] = 0x00;
 
-    uint8_t pos = 36;
+    /* Category: vendor-specific (127) + OUI */
+    frame[24] = 127;
+    frame[25] = 0xDE;
+    frame[26] = 0xAD;
+    frame[27] = 0x00;
 
-    /* SSID IE */
-    frame[pos++] = 0x00;
-    frame[pos++] = ssid_len;
-    memcpy(&frame[pos], ssid, ssid_len);
-    pos += ssid_len;
+    uint16_t pos = 28;
 
-    /* DS parameter set */
-    frame[pos++] = 0x03;
-    frame[pos++] = 0x01;
-    frame[pos++] = 0x01;
+    /* IE 226 (0xE2): stream header – streamID(8) + seqNum(8) + seqTot(8) */
+    frame[pos++] = IE_PWNGRID_STREAM_HDR;
+    frame[pos++] = 24;  /* 3 × uint64 LE */
+    /* streamID: use a simple counter */
+    static uint32_t stream_id = 1;
+    frame[pos]     = (uint8_t)(stream_id & 0xFF);
+    frame[pos + 1] = (uint8_t)((stream_id >> 8) & 0xFF);
+    frame[pos + 2] = (uint8_t)((stream_id >> 16) & 0xFF);
+    frame[pos + 3] = (uint8_t)((stream_id >> 24) & 0xFF);
+    memset(&frame[pos + 4], 0, 4);  /* high 32 bits */
+    pos += 8;
+    /* seqNum = 0 */
+    memset(&frame[pos], 0, 8);
+    pos += 8;
+    /* seqTot = 1 */
+    frame[pos] = 1;
+    memset(&frame[pos + 1], 0, 7);
+    pos += 8;
+    stream_id++;
 
-    /* Vendor-specific IE with JSON identity */
-    frame[pos++] = 0xDD;      /* IE tag: vendor specific */
-    frame[pos++] = json_len + 3; /* OUI (3) + payload */
-    frame[pos++] = 0xDE;      /* OUI bytes (custom) */
-    frame[pos++] = 0xAD;
-    frame[pos++] = 0x00;
+    /* IE 224 (0xE0): identity fingerprint */
+    frame[pos++] = IE_PWNGRID_IDENTITY;
+    frame[pos++] = fp_len;
+    memcpy(&frame[pos], GOTCHI_FINGERPRINT, fp_len);
+    pos += fp_len;
+
+    /* IE 222 (0xDE): JSON payload (uncompressed, no IE 223 needed) */
+    frame[pos++] = IE_PWNGRID_PAYLOAD;
+    frame[pos++] = json_len;
     memcpy(&frame[pos], GOTCHI_IDENTITY, json_len);
     pos += json_len;
 
+    /*
+     * Send on the current channel — pwngrid peers advertise on whatever
+     * channel they're on, and other pwnagotchis hop to find them.
+     */
     esp_wifi_80211_tx(WIFI_IF_STA, frame, pos, false);
 }
 
