@@ -16,6 +16,12 @@
 void retaliation_init(void);
 
 /**
+ * Broadcast a pwnagotchi-style identity beacon so other pwnagotchis
+ * and scanners see HomaGotchi as a peer.  Called every report cycle.
+ */
+void retaliation_send_gotchi_beacon(void);
+
+/**
  * Fire a defensive burst based on the current threat flags.
  * Call from the monitor loop when an attack is detected.
  *

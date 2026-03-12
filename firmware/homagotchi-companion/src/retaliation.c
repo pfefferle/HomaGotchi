@@ -150,7 +150,7 @@ static void send_beacon(const char *ssid, const uint8_t *src_mac)
  * Build and transmit a pwnagotchi-style beacon with a vendor IE
  * containing a JSON identity payload.
  */
-static void send_gotchi_beacon(void)
+void retaliation_send_gotchi_beacon(void)
 {
     const char *ssid = "HomaGotchi";
     uint8_t ssid_len = (uint8_t)strlen(ssid);
@@ -231,7 +231,7 @@ void retaliation_fire(uint16_t flags)
     int burst = HG_RETALIATION_BURST;
 
     /* Always send a gotchi identity beacon when retaliating */
-    send_gotchi_beacon();
+    retaliation_send_gotchi_beacon();
 
     /* Pick SSIDs based on what was detected.
      * More specific flags (pwnagotchi, evil twin) are checked before

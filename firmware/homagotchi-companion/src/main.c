@@ -62,6 +62,9 @@ static void monitor_task(void *arg)
 
             wifi_report_t r = wifi_sniffer_collect(interval_elapsed);
 
+            /* Always broadcast our pwnagotchi identity so peers see us */
+            retaliation_send_gotchi_beacon();
+
             /* Defensive retaliation: broadcast funny beacons when attacked */
             if (r.flags) {
                 retaliation_fire(r.flags);
