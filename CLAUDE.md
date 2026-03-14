@@ -147,7 +147,7 @@ Retaliates with `SSIDS_GENERIC[]`.
 ### Pineapple (`HG_FLAG_PINEAPPLE`)
 
 Multi-method detection:
-1. **OUI matching**: 15 known attack device OUI prefixes with suspicion levels (ALWAYS vs WHEN_OPEN): Hak5, Alfa, Shenzhen Century, Panda Wireless, MediaTek, GL.iNet, Realtek, Ralink, spoofed `DE:AD:BE`
+1. **OUI matching**: 24 known attack device OUI prefixes with suspicion levels (ALWAYS vs WHEN_OPEN): Hak5, Alfa, Shenzhen Century, Panda Wireless, MediaTek, GL.iNet, Realtek, Ralink, Espressif (ESP32/ESP8266), spoofed `DE:AD:BE`
 2. **Capability minimalism**: Capability `0x0001` or `0x0104` with <= 3 tagged IEs (real APs have many more)
 3. **Attack vendor IEs**: Vendor IE with OUI `50:52:4B` ("PRK") type `0x01` — M5PORKCHOP BACON fingerprint
 
@@ -159,10 +159,42 @@ Skipped if already identified as pwnagotchi. Retaliates with `SSIDS_FLIPPER[]`.
 
 ### Auth Flood (`HG_FLAG_AUTH_FLOOD`)
 
-Counts authentication frames (subtype `0x0B`). Count >= `HG_AUTH_FLOOD_THRESHOLD` (20) per 10s interval triggers the flag. Detects auth DoS and PMKID capture attempts. Retaliates with `SSIDS_AUTH_FLOOD[]`.
+Counts authentication frames (subtype `0x0B`). Count >= `HG_AUTH_FLOOD_THRESHOLD` (20) per 10s interval triggers the flag. Detects auth DoS and PMKID capture attempts. Includes SAE commit sub-detection for WPA3 attacks. Retaliates with `SSIDS_AUTH_FLOOD[]`.
 
 **Reference implementations:**
 - **M5PORKCHOP** — [0ct0sec/M5PORKCHOP](https://github.com/0ct0sec/M5PORKCHOP): `src/modes/oink.cpp` sends association requests for active PMKID extraction, searches EAPOL M1 for KDE pattern `DD 14 00 0F AC 04` + 16-byte PMKID
+- **GhostESP** — [GhostESP-Revival/GhostESP](https://github.com/jaylikesbunda/Ghost_ESP): auth flood and EAPOL attacks
+- **risinek esp32-wifi-penetration-tool** — [risinek/esp32-wifi-penetration-tool](https://github.com/risinek/esp32-wifi-penetration-tool): PMKID capture via auth/assoc
+
+### Association Flood (`HG_FLAG_ASSOC_FLOOD`)
+
+Counts association request frames (subtype `0x00`). Count >= `HG_ASSOC_FLOOD_THRESHOLD` (20) per 10s interval triggers the flag. Detects AP table exhaustion attacks. Retaliates with `SSIDS_GENERIC[]`.
+
+**Reference implementations:**
+- **GhostESP** — [GhostESP-Revival/GhostESP](https://github.com/jaylikesbunda/Ghost_ESP): association flood capabilities
+- **risinek esp32-wifi-penetration-tool** — [risinek/esp32-wifi-penetration-tool](https://github.com/risinek/esp32-wifi-penetration-tool): rogue duplicate AP with forced associations
+
+### EAPOL Logoff (`HG_FLAG_EAPOL_LOGOFF`)
+
+Detects EAPOL-Logoff frames (ethertype `0x888E`, packet type 2) in data frames. Count >= `HG_EAPOL_LOGOFF_THRESHOLD` (2) per interval triggers — extremely rare in normal traffic. Catches 802.1X enterprise session hijacking. Retaliates with `SSIDS_EAPOL[]`.
+
+**Reference implementations:**
+- **GhostESP** — [GhostESP-Revival/GhostESP](https://github.com/jaylikesbunda/Ghost_ESP): EAPOL logoff attack to disconnect 802.1X enterprise clients
+
+### RTS/CTS Attack (`HG_FLAG_RTS_CTS`)
+
+Monitors control frames for CTS-to-self (type 1, subtype `0x0C`) with suspicious NAV/duration values > `HG_RTS_CTS_NAV_THRESHOLD` (15000μs). Count >= `HG_RTS_CTS_THRESHOLD` (5) per interval triggers. Detects virtual carrier sense channel reservation attacks. Retaliates with `SSIDS_RTS_CTS[]`.
+
+**Reference implementations:**
+- **mdk4** — [aircrack-ng/mdk4](https://github.com/aircrack-ng/mdk4): CTS/RTS flood mode for channel DoS
+
+### SAE Flood (`HG_FLAG_SAE_FLOOD`)
+
+Sub-detection within auth frames. Counts SAE authentication commit frames (algorithm 3, sequence 1). Count >= `HG_SAE_FLOOD_THRESHOLD` (10) per interval triggers. Detects WPA3 Dragonblood DoS. Retaliates with `SSIDS_SAE[]`.
+
+**Reference implementations:**
+- **GhostESP** — [GhostESP-Revival/GhostESP](https://github.com/jaylikesbunda/Ghost_ESP): WPA3/SAE attacks
+- **M5MonsterC5** — ESP32-C5 with 5GHz WiFi 6 support: SAE overflow attacks
 
 ### BLE Signatures (HA-side only, no companion needed)
 
@@ -186,6 +218,29 @@ The firmware logs correlated attack patterns that indicate coordinated attacks:
 - **Deauth + Evil Twin** = active AP attack (deauth clients off legitimate AP, then clone it)
 - **Probe Flood + Karma** = karma attack in progress (flood probes to discover SSIDs, then respond)
 - **Pwnagotchi + Deauth** = pwnagotchi actively hunting (not just observing)
+- **EAPOL Logoff + Evil Twin** = 802.1X session hijack (disconnect enterprise clients, present fake AP)
+- **SAE Flood + Auth Flood** = WPA3 DoS (Dragonblood attack overwhelming AP crypto)
+
+### ESP32 Attack Firmware Reference
+
+Major ESP32-based attack tools whose techniques we detect:
+
+| Firmware | Key Attacks | Detection Coverage |
+|----------|------------|-------------------|
+| **ESP32Marauder** | Deauth, beacon spam, evil portal, PMKID, BLE spam | Deauth, beacon spam, pineapple, auth flood, BLE signatures |
+| **GhostESP** | Deauth, karma, EAPOL logoff, DHCP starve, SAE attacks, BLE spam | Deauth, karma, EAPOL logoff, SAE flood, auth flood, BLE signatures |
+| **Bruce Firmware** | Deauth, beacon spam, evil portal, BLE spam, PwnGrid spam | Deauth, beacon spam, pwnagotchi, BLE signatures |
+| **Evil-M5Project** | Evil twin, karma, deauth, probe flood, DHCP starve | Evil twin, karma, deauth, probe flood |
+| **minigotchi-ESP32** | Deauth, PwnGrid beacons | Deauth, pwnagotchi |
+| **M5PORKCHOP** | Deauth, beacon spam (BACON), PMKID (OINK), BLE spam | Deauth, beacon spam, pineapple, auth flood, BLE signatures |
+| **CapibaraZero** | Deauth, evil portal, DHCP starve, BLE spam | Deauth, BLE signatures |
+| **Spacehuhn Deauther** | Deauth, beacon spam, probe flood | Deauth, beacon spam, probe flood |
+| **risinek penetration tool** | PMKID, handshake capture, rogue AP | Auth flood, evil twin |
+| **M5MonsterC5** | 5GHz deauth, evil twin, SAE overflow, karma | SAE flood, auth flood, evil twin, karma |
+| **PwnGridSpam** | Fake pwnagotchi identity flood, DoScreen | Pwnagotchi |
+| **EvilAppleJuice-ESP32** | Apple BLE proximity spam | BLE signatures (apple_juice_spoofing) |
+| **WiFi Nugget** | Beacon spam, deauth, captive portal | Deauth, beacon spam |
+| **PhiSiFi / DEvil-Twin** | Combined deauth + evil twin | Deauth, evil twin (correlated) |
 
 ### Peer detector projects
 

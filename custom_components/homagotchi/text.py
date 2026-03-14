@@ -16,22 +16,28 @@ from homeassistant.helpers.event import async_track_time_interval
 from .const import (
     DOMAIN,
     EVENT_DETECTION,
+    FACE_ALERT_ASSOC_FLOOD,
     FACE_ALERT_AUTH_FLOOD,
     FACE_ALERT_BLE_SPAM,
     FACE_ALERT_DEAUTH,
+    FACE_ALERT_EAPOL,
     FACE_ALERT_EVIL_TWIN,
     FACE_ALERT_FLIPPER,
     FACE_ALERT_MULTI,
     FACE_ALERT_PWNAGOTCHI,
+    FACE_ALERT_RTS_CTS,
+    FACE_ALERT_SAE,
     FACE_IDLE,
     FACE_MONITORING,
     NUGGET_FACES,
     PORKCHOP_FACES,
     PWNAGOTCHI_FACES,
+    QUIPS_ASSOC_FLOOD,
     QUIPS_AUTH_FLOOD,
     QUIPS_BEACON_SPAM,
     QUIPS_BLE_SPAM,
     QUIPS_DEAUTH,
+    QUIPS_EAPOL_LOGOFF,
     QUIPS_EVIL_TWIN,
     QUIPS_FLIPPER,
     QUIPS_IDLE,
@@ -40,6 +46,8 @@ from .const import (
     QUIPS_PINEAPPLE,
     QUIPS_PROBE_FLOOD,
     QUIPS_PWNAGOTCHI,
+    QUIPS_RTS_CTS,
+    QUIPS_SAE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,6 +64,10 @@ _DETECTOR_FACE_MAP: dict[str, list[int]] = {
     f"{DOMAIN}_karma": FACE_ALERT_EVIL_TWIN,
     f"{DOMAIN}_pineapple": FACE_ALERT_FLIPPER,
     f"{DOMAIN}_auth_flood": FACE_ALERT_AUTH_FLOOD,
+    f"{DOMAIN}_assoc_flood": FACE_ALERT_ASSOC_FLOOD,
+    f"{DOMAIN}_eapol_logoff": FACE_ALERT_EAPOL,
+    f"{DOMAIN}_rts_cts": FACE_ALERT_RTS_CTS,
+    f"{DOMAIN}_sae_flood": FACE_ALERT_SAE,
 }
 
 # Detectors that switch to a device-specific mascot face set.
@@ -76,6 +88,10 @@ _DETECTOR_QUIP_MAP: dict[str, list[str]] = {
     f"{DOMAIN}_karma": QUIPS_KARMA,
     f"{DOMAIN}_pineapple": QUIPS_PINEAPPLE,
     f"{DOMAIN}_auth_flood": QUIPS_AUTH_FLOOD,
+    f"{DOMAIN}_assoc_flood": QUIPS_ASSOC_FLOOD,
+    f"{DOMAIN}_eapol_logoff": QUIPS_EAPOL_LOGOFF,
+    f"{DOMAIN}_rts_cts": QUIPS_RTS_CTS,
+    f"{DOMAIN}_sae_flood": QUIPS_SAE,
 }
 
 

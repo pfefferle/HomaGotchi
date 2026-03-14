@@ -30,7 +30,7 @@ There is no test infrastructure or linter configured.
 
 Four subsystems, each a .c/.h pair, orchestrated by `main.c`:
 
-- **wifi_sniffer** — Promiscuous mode capture on all 13 channels. The `sniffer_cb()` ISR-context callback classifies management frames and updates counters/flags protected by a spinlock (`s_counter_mux`). Detects 8 threat types: deauth, pwnagotchi, evil twin, beacon spam, probe flood, karma, pineapple, auth flood.
+- **wifi_sniffer** — Promiscuous mode capture on all 13 channels. The `sniffer_cb()` ISR-context callback classifies management, data, and control frames, updating counters/flags protected by a spinlock (`s_counter_mux`). Detects 12 threat types: deauth, pwnagotchi, evil twin, beacon spam, probe flood, karma, pineapple, auth flood, association flood, EAPOL logoff, RTS/CTS attack, SAE flood.
 - **bthome** — Encodes `wifi_report_t` into BTHome v2 service data (UUID 0xFCD2) and broadcasts as non-connectable BLE advertisements. Home Assistant auto-discovers devices named "Gotchi".
 - **retaliation** — Injects raw 802.11 beacon frames via `esp_wifi_80211_tx()`. Two modes: pwngrid identity beacons (Address2=`DE:AD:BE:EF:DE:AD`, IE 222 with JSON) and funny SSID beacons with random MACs.
 - **main** — FreeRTOS task (`monitor_task`) on core 1: hops channels every 500ms, collects reports every 10s, fires urgent broadcasts when new flags appear (throttled to 1/sec).
@@ -138,7 +138,7 @@ Retaliates with `SSIDS_GENERIC[]`.
 ### Pineapple (`HG_FLAG_PINEAPPLE`)
 
 Multi-method detection:
-1. **OUI matching**: 15 known prefixes with suspicion levels (Hak5, Alfa, MediaTek, GL.iNet, Realtek, Ralink, etc.)
+1. **OUI matching**: 24 known prefixes with suspicion levels (Hak5, Alfa, MediaTek, GL.iNet, Realtek, Ralink, Espressif, etc.)
 2. **Capability minimalism**: Capability `0x0001` or `0x0104` with <= 3 IEs
 3. **Attack vendor IEs**: OUI `50:52:4B` ("PRK") type `0x01` — M5PORKCHOP BACON fingerprint
 
@@ -150,10 +150,26 @@ Skipped if pwnagotchi. Retaliates with `SSIDS_FLIPPER[]`.
 
 ### Auth Flood (`HG_FLAG_AUTH_FLOOD`)
 
-Counts authentication frames (subtype `0x0B`). Count >= `HG_AUTH_FLOOD_THRESHOLD` (20) per 10s triggers the flag. Retaliates with `SSIDS_AUTH_FLOOD[]`.
+Counts authentication frames (subtype `0x0B`). Count >= `HG_AUTH_FLOOD_THRESHOLD` (20) per 10s triggers the flag. Includes SAE commit sub-detection. Retaliates with `SSIDS_AUTH_FLOOD[]`.
 
 **Reference implementations:**
 - **M5PORKCHOP** — [0ct0sec/M5PORKCHOP](https://github.com/0ct0sec/M5PORKCHOP): `src/modes/oink.cpp` active PMKID extraction via association requests, EAPOL M1 KDE pattern `DD 14 00 0F AC 04`
+
+### Association Flood (`HG_FLAG_ASSOC_FLOOD`)
+
+Counts association request frames (subtype `0x00`). Count >= `HG_ASSOC_FLOOD_THRESHOLD` (20) per 10s triggers. Detects AP table exhaustion attacks. Retaliates with `SSIDS_GENERIC[]`.
+
+### EAPOL Logoff (`HG_FLAG_EAPOL_LOGOFF`)
+
+Scans data frames for EAPOL ethertype (`0x888E`) with logoff packet type (2). Count >= `HG_EAPOL_LOGOFF_THRESHOLD` (2) per interval triggers — these are extremely rare in normal traffic. Catches 802.1X enterprise session hijacking (GhostESP attack). Retaliates with `SSIDS_EAPOL[]`.
+
+### RTS/CTS Attack (`HG_FLAG_RTS_CTS`)
+
+Monitors control frames for CTS-to-self with NAV > `HG_RTS_CTS_NAV_THRESHOLD` (15000μs). Count >= `HG_RTS_CTS_THRESHOLD` (5) per interval triggers. Detects virtual carrier sense channel reservation attacks (mdk4). Retaliates with `SSIDS_RTS_CTS[]`.
+
+### SAE Flood (`HG_FLAG_SAE_FLOOD`)
+
+Sub-detection within auth frames. Counts SAE authentication commit frames (algorithm 3, sequence 1). Count >= `HG_SAE_FLOOD_THRESHOLD` (10) per interval triggers. Detects WPA3 Dragonblood DoS. Retaliates with `SSIDS_SAE[]`.
 
 ### Cross-detector Correlation
 
@@ -161,6 +177,8 @@ Logs correlated attack patterns:
 - **Deauth + Evil Twin** = active AP attack
 - **Probe Flood + Karma** = karma attack in progress
 - **Pwnagotchi + Deauth** = pwnagotchi actively hunting
+- **EAPOL Logoff + Evil Twin** = 802.1X session hijack
+- **SAE Flood + Auth Flood** = WPA3 DoS (Dragonblood)
 
 ## Hardware
 

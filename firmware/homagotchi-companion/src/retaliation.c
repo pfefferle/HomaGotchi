@@ -103,6 +103,30 @@ static const char *SSIDS_AUTH_FLOOD[] = {
 };
 #define NUM_SSIDS_AUTH_FLOOD (sizeof(SSIDS_AUTH_FLOOD) / sizeof(SSIDS_AUTH_FLOOD[0]))
 
+static const char *SSIDS_EAPOL[] = {
+    "EAPOL logoff? Really?",
+    "802.1X says NO",
+    "Your logoff is logged",
+    "Enterprise WiFi fights back",
+};
+#define NUM_SSIDS_EAPOL (sizeof(SSIDS_EAPOL) / sizeof(SSIDS_EAPOL[0]))
+
+static const char *SSIDS_RTS_CTS[] = {
+    "CTS denied, punk",
+    "Channel is mine, not yours",
+    "NAV abuse detected",
+    "Virtual carrier sense attack? LOL",
+};
+#define NUM_SSIDS_RTS_CTS (sizeof(SSIDS_RTS_CTS) / sizeof(SSIDS_RTS_CTS[0]))
+
+static const char *SSIDS_SAE[] = {
+    "WPA3 DoS? Nice try",
+    "Dragonblood detected",
+    "SAE commit spam logged",
+    "Your dragon has been slain",
+};
+#define NUM_SSIDS_SAE (sizeof(SSIDS_SAE) / sizeof(SSIDS_SAE[0]))
+
 static const char *SSIDS_GENERIC[] = {
     "HomaGotchi is watching",
     "Nothing to see here",
@@ -318,6 +342,12 @@ void retaliation_fire(uint16_t flags)
             ssid = pick_ssid(SSIDS_EVIL_TWIN, NUM_SSIDS_EVIL_TWIN);
         } else if (flags & HG_FLAG_PINEAPPLE) {
             ssid = pick_ssid(SSIDS_FLIPPER, NUM_SSIDS_FLIPPER);
+        } else if (flags & HG_FLAG_SAE_FLOOD) {
+            ssid = pick_ssid(SSIDS_SAE, NUM_SSIDS_SAE);
+        } else if (flags & HG_FLAG_EAPOL_LOGOFF) {
+            ssid = pick_ssid(SSIDS_EAPOL, NUM_SSIDS_EAPOL);
+        } else if (flags & HG_FLAG_RTS_CTS) {
+            ssid = pick_ssid(SSIDS_RTS_CTS, NUM_SSIDS_RTS_CTS);
         } else if (flags & HG_FLAG_AUTH_FLOOD) {
             ssid = pick_ssid(SSIDS_AUTH_FLOOD, NUM_SSIDS_AUTH_FLOOD);
         } else if (flags & HG_FLAG_DEAUTH) {

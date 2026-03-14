@@ -64,6 +64,27 @@
 /* Auth frames per interval to flag authentication flood */
 #define HG_AUTH_FLOOD_THRESHOLD 20
 
+/* Association requests per interval to flag association flood */
+#define HG_ASSOC_FLOOD_THRESHOLD 20
+
+/* EAPOL Logoff frames per interval — extremely rare in normal traffic,
+ * so even 1-2 is suspicious.  GhostESP uses these to disconnect 802.1X
+ * clients. */
+#define HG_EAPOL_LOGOFF_THRESHOLD 2
+
+/* CTS-to-self frames with large NAV per interval to flag RTS/CTS attack.
+ * Normal CTS traffic is low-rate and short-duration.  Attack tools flood
+ * CTS frames with high duration values to silence the channel. */
+#define HG_RTS_CTS_THRESHOLD  5
+
+/* NAV/duration value in microseconds above which a CTS frame is suspicious.
+ * Normal CTS-to-self uses ~5ms.  Attack tools set 30ms+ to reserve channel. */
+#define HG_RTS_CTS_NAV_THRESHOLD 15000
+
+/* SAE authentication commit frames per interval — flood targets WPA3 APs
+ * with expensive elliptic curve computations (Dragonblood attack). */
+#define HG_SAE_FLOOD_THRESHOLD 10
+
 /* Recent probe SSIDs to track for karma correlation (ring buffer) */
 #define HG_MAX_PROBE_SSIDS    16
 
@@ -81,3 +102,7 @@
 #define HG_FLAG_PINEAPPLE     (1 << 6)
 #define HG_FLAG_RETALIATION   (1 << 7)
 #define HG_FLAG_AUTH_FLOOD    (1 << 8)
+#define HG_FLAG_ASSOC_FLOOD   (1 << 9)
+#define HG_FLAG_EAPOL_LOGOFF  (1 << 10)
+#define HG_FLAG_RTS_CTS       (1 << 11)
+#define HG_FLAG_SAE_FLOOD     (1 << 12)

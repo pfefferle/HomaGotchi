@@ -4,7 +4,10 @@
  * Detects:
  *   - Deauth frames (subtype 0x0C) with broadcast + reason code analysis
  *   - Disassoc frames (subtype 0x0A)
- *   - Auth floods (subtype 0x0B)
+ *   - Auth floods (subtype 0x0B) with SAE commit sub-detection
+ *   - Association floods (subtype 0x00)
+ *   - EAPOL Logoff attacks (ethertype 0x888E, type 2)
+ *   - RTS/CTS channel reservation attacks (CTS with large NAV)
  *   - Pwnagotchi beacons (MAC DE:AD:BE:EF:DE:AD + JSON fallback)
  *   - Evil twin APs (same SSID from different BSSIDs, RSSI-weighted)
  *   - Beacon spam (many unique source MACs, known attack SSIDs, entropy)
@@ -29,13 +32,24 @@ static const char *TAG = "sniffer";
 
 /* ── 802.11 management frame subtypes ─────────────────────────────────────── */
 
-#define SUBTYPE_ASSOC_REQ 0x00
-#define SUBTYPE_PROBE_REQ 0x04
+#define SUBTYPE_ASSOC_REQ  0x00
+#define SUBTYPE_PROBE_REQ  0x04
 #define SUBTYPE_PROBE_RESP 0x05
-#define SUBTYPE_BEACON    0x08
-#define SUBTYPE_DISASSOC  0x0A
-#define SUBTYPE_AUTH      0x0B
-#define SUBTYPE_DEAUTH    0x0C
+#define SUBTYPE_BEACON     0x08
+#define SUBTYPE_DISASSOC   0x0A
+#define SUBTYPE_AUTH       0x0B
+#define SUBTYPE_DEAUTH     0x0C
+
+/* 802.11 control frame subtypes */
+#define SUBTYPE_CTS        0x0C  /* Clear-to-send (type 1, subtype 0x0C) */
+
+/* 802.11 authentication algorithm numbers */
+#define AUTH_ALG_SAE       3     /* Simultaneous Authentication of Equals (WPA3) */
+
+/* EAPOL constants */
+#define EAPOL_ETHERTYPE_0  0x88  /* 802.1X ethertype high byte */
+#define EAPOL_ETHERTYPE_1  0x8E  /* 802.1X ethertype low byte */
+#define EAPOL_TYPE_LOGOFF  2     /* EAPOL-Logoff packet type */
 
 /* Beacon: 24-byte MAC header + 12-byte fixed params = tagged IEs at offset 36 */
 #define BEACON_IE_OFFSET  (24 + 12)
@@ -119,6 +133,17 @@ static const oui_entry_t PINEAPPLE_OUIS[] = {
     {{0x00, 0xE0, 0x4C}, SUSPICION_WHEN_OPEN},
     /* Ralink/MediaTek — common in cheap pentest adapters */
     {{0x00, 0x0E, 0x8E}, SUSPICION_WHEN_OPEN},
+    /* Espressif — ESP32/ESP8266 used by most attack tools
+     * (Marauder, GhostESP, Bruce, Evil-M5, Deauther, etc.) */
+    {{0x24, 0x0A, 0xC4}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0x30, 0xAE, 0xA4}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0xA4, 0xCF, 0x12}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0xCC, 0x50, 0xE3}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0x24, 0x6F, 0x28}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0x3C, 0x71, 0xBF}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0x84, 0xCC, 0xA8}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0xAC, 0x67, 0xB2}, SUSPICION_WHEN_OPEN},  /* Espressif common */
+    {{0x5C, 0xCF, 0x7F}, SUSPICION_WHEN_OPEN},  /* ESP8266 (Deauther) */
 };
 
 #define NUM_PINEAPPLE_OUIS (sizeof(PINEAPPLE_OUIS) / sizeof(PINEAPPLE_OUIS[0]))
@@ -130,7 +155,11 @@ static portMUX_TYPE s_counter_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint16_t s_deauth;
 static uint16_t s_disassoc;
 static uint16_t s_probe_requests;
-static uint16_t s_auth_frames;   /* authentication frame counter */
+static uint16_t s_auth_frames;    /* authentication frame counter */
+static uint16_t s_assoc_frames;   /* association request counter */
+static uint16_t s_eapol_logoff;   /* EAPOL-Logoff frame counter */
+static uint16_t s_cts_attack;     /* CTS frames with suspicious NAV */
+static uint16_t s_sae_commits;    /* SAE authentication commit counter */
 static uint16_t s_flags;  /* bitmask of HG_FLAG_* */
 
 /* ── Evil-twin / karma AP table ───────────────────────────────────────────── */
@@ -578,6 +607,53 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         }
     }
 
+    /* ── EAPOL Logoff detection (data frames) ────────────────────────────── */
+    /* EAPOL uses ethertype 0x888E.  In 802.11 data frames, the LLC/SNAP
+     * header starts at offset 24 (QoS) or 26 (QoS+HTC), with ethertype
+     * at +6 (SNAP) = offset 30 or 32.  We search for the EAPOL signature
+     * in the first 40 bytes to be safe.
+     * EAPOL-Logoff = version(1) + type(1, value 2) + length(2, value 0).
+     * GhostESP sends these to disconnect 802.1X enterprise clients. */
+    if (type == WIFI_PKT_DATA && frame_len >= 36) {
+        for (uint16_t i = 24; i <= frame_len - 6 && i < 40; i++) {
+            if (frame[i] == EAPOL_ETHERTYPE_0 && frame[i+1] == EAPOL_ETHERTYPE_1) {
+                /* Found EAPOL ethertype — check packet type at +3 */
+                if (i + 4 <= frame_len && frame[i + 3] == EAPOL_TYPE_LOGOFF) {
+                    portENTER_CRITICAL_ISR(&s_counter_mux);
+                    s_eapol_logoff++;
+                    if (s_eapol_logoff >= HG_EAPOL_LOGOFF_THRESHOLD) {
+                        s_flags |= HG_FLAG_EAPOL_LOGOFF;
+                    }
+                    portEXIT_CRITICAL_ISR(&s_counter_mux);
+                }
+                break;
+            }
+        }
+        return;
+    }
+
+    /* ── RTS/CTS channel reservation attack (control frames) ─────────────── */
+    /* CTS-to-self frames are type=1 (control), subtype=0x0C.
+     * Frame layout: FC(2) + Duration(2) + RA(6) = 10 bytes minimum.
+     * Attack tools flood CTS frames with large duration/NAV values to
+     * silence the channel (virtual carrier sense attack).
+     * We check for CTS frames with NAV > HG_RTS_CTS_NAV_THRESHOLD. */
+    if (type == WIFI_PKT_CTRL && frame_len >= 10) {
+        uint8_t ctrl_subtype = (frame[0] >> 4) & 0x0F;
+        if (ctrl_subtype == SUBTYPE_CTS) {
+            uint16_t duration = (uint16_t)frame[2] | ((uint16_t)frame[3] << 8);
+            if (duration > HG_RTS_CTS_NAV_THRESHOLD) {
+                portENTER_CRITICAL_ISR(&s_counter_mux);
+                s_cts_attack++;
+                if (s_cts_attack >= HG_RTS_CTS_THRESHOLD) {
+                    s_flags |= HG_FLAG_RTS_CTS;
+                }
+                portEXIT_CRITICAL_ISR(&s_counter_mux);
+            }
+        }
+        return;
+    }
+
     if (type != WIFI_PKT_MGMT) {
         return;
     }
@@ -638,10 +714,31 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         return;
     }
 
-    /* ── Auth flood ───────────────────────────────────────────────────────── */
+    /* ── Auth flood + SAE commit detection ──────────────────────────────── */
     if (subtype == SUBTYPE_AUTH) {
         portENTER_CRITICAL_ISR(&s_counter_mux);
         s_auth_frames++;
+
+        /* SAE (WPA3) commit flood detection (Dragonblood attack).
+         * Auth frame fixed params: auth algorithm (2 bytes at offset 24),
+         * auth sequence (2 bytes at offset 26), status (2 bytes at offset 28).
+         * SAE uses algorithm 3, commit is sequence 1. */
+        if (frame_len >= 30) {
+            uint16_t auth_alg = (uint16_t)frame[24] | ((uint16_t)frame[25] << 8);
+            uint16_t auth_seq = (uint16_t)frame[26] | ((uint16_t)frame[27] << 8);
+            if (auth_alg == AUTH_ALG_SAE && auth_seq == 1) {
+                s_sae_commits++;
+            }
+        }
+
+        portEXIT_CRITICAL_ISR(&s_counter_mux);
+        return;
+    }
+
+    /* ── Association flood ────────────────────────────────────────────────── */
+    if (subtype == SUBTYPE_ASSOC_REQ) {
+        portENTER_CRITICAL_ISR(&s_counter_mux);
+        s_assoc_frames++;
         portEXIT_CRITICAL_ISR(&s_counter_mux);
         return;
     }
@@ -859,7 +956,9 @@ void wifi_sniffer_init(void)
     esp_wifi_set_promiscuous_rx_cb(sniffer_cb);
 
     wifi_promiscuous_filter_t filter = {
-        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA,
+        .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT |
+                       WIFI_PROMIS_FILTER_MASK_DATA |
+                       WIFI_PROMIS_FILTER_MASK_CTRL,
     };
     esp_wifi_set_promiscuous_filter(&filter);
 
@@ -887,7 +986,9 @@ bool wifi_sniffer_has_alert(void)
     bool alert = (s_flags != 0) ||
                  ((s_deauth + s_disassoc) >= HG_ATTACK_THRESHOLD) ||
                  (s_probe_requests >= HG_PROBE_FLOOD_THRESHOLD) ||
-                 (s_auth_frames >= HG_AUTH_FLOOD_THRESHOLD);
+                 (s_auth_frames >= HG_AUTH_FLOOD_THRESHOLD) ||
+                 (s_assoc_frames >= HG_ASSOC_FLOOD_THRESHOLD) ||
+                 (s_sae_commits >= HG_SAE_FLOOD_THRESHOLD);
     portEXIT_CRITICAL(&s_counter_mux);
 
     if (s_beacon_mac_count >= HG_BEACON_SPAM_THRESHOLD ||
@@ -912,6 +1013,12 @@ uint16_t wifi_sniffer_peek_flags(void)
     }
     if (s_auth_frames >= HG_AUTH_FLOOD_THRESHOLD) {
         flags |= HG_FLAG_AUTH_FLOOD;
+    }
+    if (s_assoc_frames >= HG_ASSOC_FLOOD_THRESHOLD) {
+        flags |= HG_FLAG_ASSOC_FLOOD;
+    }
+    if (s_sae_commits >= HG_SAE_FLOOD_THRESHOLD) {
+        flags |= HG_FLAG_SAE_FLOOD;
     }
     portEXIT_CRITICAL(&s_counter_mux);
 
@@ -945,6 +1052,15 @@ wifi_report_t wifi_sniffer_collect(bool full_reset)
     if (s_auth_frames >= HG_AUTH_FLOOD_THRESHOLD) {
         r.flags |= HG_FLAG_AUTH_FLOOD;
     }
+    if (s_assoc_frames >= HG_ASSOC_FLOOD_THRESHOLD) {
+        r.flags |= HG_FLAG_ASSOC_FLOOD;
+    }
+    if (s_eapol_logoff >= HG_EAPOL_LOGOFF_THRESHOLD) {
+        r.flags |= HG_FLAG_EAPOL_LOGOFF;
+    }
+    if (s_sae_commits >= HG_SAE_FLOOD_THRESHOLD) {
+        r.flags |= HG_FLAG_SAE_FLOOD;
+    }
     if (s_beacon_mac_count >= HG_BEACON_SPAM_THRESHOLD ||
         s_beacon_ssid_count >= HG_BEACON_SSID_SPAM_THRESHOLD) {
         r.flags |= HG_FLAG_BEACON_SPAM;
@@ -971,6 +1087,12 @@ wifi_report_t wifi_sniffer_collect(bool full_reset)
     if ((r.flags & HG_FLAG_PWNAGOTCHI) && (r.flags & HG_FLAG_DEAUTH)) {
         ESP_LOGW(TAG, "CORRELATED: pwnagotchi + deauth = active hunting");
     }
+    if ((r.flags & HG_FLAG_EAPOL_LOGOFF) && (r.flags & HG_FLAG_EVIL_TWIN)) {
+        ESP_LOGW(TAG, "CORRELATED: EAPOL logoff + evil twin = 802.1X hijack");
+    }
+    if ((r.flags & HG_FLAG_SAE_FLOOD) && (r.flags & HG_FLAG_AUTH_FLOOD)) {
+        ESP_LOGW(TAG, "CORRELATED: SAE commit flood + auth flood = WPA3 DoS");
+    }
 
     uint32_t mgmt_total = s_mgmt_frame_count;
     uint32_t dead_total = s_dead_frames;
@@ -979,6 +1101,10 @@ wifi_report_t wifi_sniffer_collect(bool full_reset)
     s_disassoc       = 0;
     s_probe_requests = 0;
     s_auth_frames    = 0;
+    s_assoc_frames   = 0;
+    s_eapol_logoff   = 0;
+    s_cts_attack     = 0;
+    s_sae_commits    = 0;
     s_flags          = 0;
     s_mgmt_frame_count = 0;
     s_dead_frames    = 0;

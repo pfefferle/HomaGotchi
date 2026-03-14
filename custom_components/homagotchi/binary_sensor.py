@@ -38,15 +38,19 @@ from .const import (
     DEFAULT_WIFI_DEAUTH_THRESHOLD,
     DOMAIN,
     EVENT_DETECTION,
+    FLAG_ASSOC_FLOOD,
     FLAG_AUTH_FLOOD,
     FLAG_BEACON_SPAM,
     FLAG_DEAUTH,
+    FLAG_EAPOL_LOGOFF,
     FLAG_EVIL_TWIN,
     FLAG_KARMA,
     FLAG_PINEAPPLE,
     FLAG_PROBE_FLOOD,
     FLAG_PWNAGOTCHI,
     FLAG_RETALIATION,
+    FLAG_RTS_CTS,
+    FLAG_SAE_FLOOD,
     WIFI_MONITOR_NAME_PREFIX,
 )
 from .signatures import SignatureMatch, match_ble_signatures
@@ -821,6 +825,90 @@ class WifiAuthFloodSensor(CompanionWifiSensor):
         return f"High auth frame rate detected (via {', '.join(reporters[:2])})"
 
 
+class WifiAssocFloodSensor(CompanionWifiSensor):
+    """Association request flood detection sensor."""
+
+    _flag_mask = FLAG_ASSOC_FLOOD
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the assoc flood sensor."""
+        super().__init__(
+            hass, entry,
+            name="Assoc Flood Detected",
+            unique_id=f"{DOMAIN}_assoc_flood",
+            icon="mdi:shield-lock-open",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No assoc flood"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"High association request rate (via {', '.join(reporters[:2])})"
+
+
+class WifiEapolLogoffSensor(CompanionWifiSensor):
+    """EAPOL-Logoff attack detection sensor."""
+
+    _flag_mask = FLAG_EAPOL_LOGOFF
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the EAPOL logoff sensor."""
+        super().__init__(
+            hass, entry,
+            name="EAPOL Logoff Attack",
+            unique_id=f"{DOMAIN}_eapol_logoff",
+            icon="mdi:lock-alert",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No EAPOL logoff attacks"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"EAPOL logoff frames detected (via {', '.join(reporters[:2])})"
+
+
+class WifiRtsCtsAttackSensor(CompanionWifiSensor):
+    """RTS/CTS channel reservation attack detection sensor."""
+
+    _flag_mask = FLAG_RTS_CTS
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the RTS/CTS attack sensor."""
+        super().__init__(
+            hass, entry,
+            name="RTS/CTS Attack Detected",
+            unique_id=f"{DOMAIN}_rts_cts",
+            icon="mdi:wifi-strength-off",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No RTS/CTS attacks"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"CTS frames with large NAV values (via {', '.join(reporters[:2])})"
+
+
+class WifiSaeFloodSensor(CompanionWifiSensor):
+    """SAE commit flood (WPA3 Dragonblood) detection sensor."""
+
+    _flag_mask = FLAG_SAE_FLOOD
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the SAE flood sensor."""
+        super().__init__(
+            hass, entry,
+            name="SAE Flood Detected",
+            unique_id=f"{DOMAIN}_sae_flood",
+            icon="mdi:shield-alert",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No SAE flood"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"WPA3 SAE commit flood (via {', '.join(reporters[:2])})"
+
+
 class WifiRetaliationSensor(CompanionWifiSensor):
     """Indicates when the companion device is retaliating with defensive beacons."""
 
@@ -861,6 +949,10 @@ async def async_setup_entry(
             WifiKarmaSensor(hass, entry),
             WifiPineappleSensor(hass, entry),
             WifiAuthFloodSensor(hass, entry),
+            WifiAssocFloodSensor(hass, entry),
+            WifiEapolLogoffSensor(hass, entry),
+            WifiRtsCtsAttackSensor(hass, entry),
+            WifiSaeFloodSensor(hass, entry),
             WifiRetaliationSensor(hass, entry),
         ]
     )
