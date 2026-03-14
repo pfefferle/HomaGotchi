@@ -17,6 +17,8 @@ from .const import (
     APPLE_POPUP_CORE,
     APPLE_POPUP_PREFIX,
     APPLE_SETUP_PREFIX,
+    BRUCE_NAME_PREFIXES,
+    BRUCE_SERVICE_UUIDS,
     CATHACK_SERVICE_UUIDS,
     FLIPPER_PAYLOAD_PATTERNS,
     FLIPPER_SERVICE_UUIDS,
@@ -140,6 +142,33 @@ def match_ble_signatures(
                         "method": "service_uuid",
                     },
                 )
+
+    # Bruce Firmware — unique service UUIDs
+    for service_uuid in service_info.service_uuids or []:
+        service_uuid_lower = service_uuid.lower()
+        for expected_uuid, variant in BRUCE_SERVICE_UUIDS.items():
+            if service_uuid_lower == expected_uuid.lower():
+                add_match(
+                    "bruce_service_uuid",
+                    {
+                        "service_uuid": service_uuid,
+                        "variant": variant,
+                        "method": "service_uuid",
+                    },
+                )
+
+    # Bruce Firmware — device name pattern matching
+    # Bruce advertises as "Bruc", "Bruce-Attack", "Bruce-Exploit",
+    # "Bruce-Flooder", "Bruce-Spammer", "BRUCE-PN532-BLE", etc.
+    if service_info.name:
+        if any(service_info.name.startswith(prefix) for prefix in BRUCE_NAME_PREFIXES):
+            add_match(
+                "bruce_device_name",
+                {
+                    "name": service_info.name,
+                    "method": "device_name",
+                },
+            )
 
     # FlipperZero/ESP32 Marauder payload signatures
     for company_id, payload in manufacturer_data.items():

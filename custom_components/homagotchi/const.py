@@ -223,6 +223,17 @@ FLIPPER_PAYLOAD_PATTERNS = {
     b"\x83\x30": "Transparent/Orange",
 }
 
+# Bruce Firmware BLE signatures (bruce.computer)
+# Bruce advertises with identifiable names and custom service UUIDs.
+BRUCE_SERVICE_UUIDS = {
+    "1bc68b2a-f3e3-11e9-81b4-2a2ae2dbcce4": "BLE Common Service",
+    "4371ec0b-3d43-49f9-b731-7c72a4a7bb91": "BLE Serial Service",
+}
+# Bruce BLE device name prefixes (mode-dependent):
+#   "Bruc" (idle/API), "Bruce-Attack", "Bruce-Exploit", "Bruce-Flooder",
+#   "Bruce-Spammer", "Bruce-PINBrute", "Bruce-Scanner", "BRUCE-PN532-BLE"
+BRUCE_NAME_PREFIXES = ("Bruc", "Bruce-", "BRUCE-")
+
 # LightBlue BLE Explorer app (commonly used for BLE reconnaissance)
 LIGHTBLUE_SERVICE_UUID = "deadf154-0000-0000-0000-0000deadf154"
 
@@ -385,5 +396,15 @@ BLE_SIGNATURES = {
         "family": "spoofing",
         "description": "CatHack / Apple Juice BLE attack tool",
         "sources": ["GhostBLE"],
+    },
+    "bruce_service_uuid": {
+        "family": "bruce",
+        "description": "Bruce firmware BLE service UUID",
+        "sources": ["BruceDevices/firmware"],
+    },
+    "bruce_device_name": {
+        "family": "bruce",
+        "description": "Bruce firmware BLE device name pattern",
+        "sources": ["BruceDevices/firmware"],
     },
 }

@@ -408,7 +408,7 @@ class BlePentestPresenceSensor(_BaseBleActivitySensor):
     """Presence sensor for concrete pentest-device signatures."""
 
     _attr_icon = "mdi:access-point"
-    _signature_families = {"flipper_zero"}
+    _signature_families = {"flipper_zero", "bruce"}
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the pentest presence sensor."""

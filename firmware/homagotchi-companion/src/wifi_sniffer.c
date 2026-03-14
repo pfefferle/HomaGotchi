@@ -93,6 +93,45 @@ static const char *ATTACK_SSID_SUBSTRINGS[] = {
 };
 #define NUM_ATTACK_SSIDS (sizeof(ATTACK_SSID_SUBSTRINGS) / sizeof(ATTACK_SSID_SUBSTRINGS[0]))
 
+/* ── Known tool SSIDs (exact match → instant pineapple flag) ─────────────── */
+/* Default management/attack AP names hardcoded in attack firmware.
+ * These are rarely seen as legitimate network names.  Exact match only
+ * (not substring) to reduce false positives. */
+
+typedef struct {
+    const char *ssid;
+    const char *tool;
+} tool_ssid_t;
+
+static const tool_ssid_t TOOL_SSIDS[] = {
+    /* Bruce Firmware (bruce.computer) */
+    {"BruceNet",        "Bruce"},
+    {"BruceAttack",     "Bruce"},
+    {"BruceShell",      "Bruce"},
+    {"BRUCE-UDP",       "Bruce"},
+    /* GhostESP (ghostesp.net) */
+    {"GhostNet",        "GhostESP"},
+    /* m5stick-nemo */
+    {"NEMO Free WiFi",  "Nemo"},
+    /* Spacehuhn ESP8266 Deauther */
+    {"pwned",           "Deauther"},
+    /* ESP32Marauder OTA mode */
+    {"MarauderOTA",     "Marauder"},
+    /* risinek esp32-wifi-penetration-tool */
+    {"ManagementAP",    "risinek"},
+    /* CapibaraZero */
+    {"capibaraZero",    "CapibaraZero"},
+};
+#define NUM_TOOL_SSIDS (sizeof(TOOL_SSIDS) / sizeof(TOOL_SSIDS[0]))
+
+/* ── Marauder static beacon timestamp ────────────────────────────────────── */
+/* ESP32Marauder's beacon template (WiFiScan.h line 440) has a hardcoded
+ * timestamp field that never changes.  Real APs increment this continuously.
+ * Bytes 24-31 of the beacon frame = 8-byte TSF timestamp. */
+static const uint8_t MARAUDER_TIMESTAMP[8] = {
+    0x83, 0x51, 0xf7, 0x8f, 0x0f, 0x00, 0x00, 0x00
+};
+
 /* ── Suspicious OUIs for pineapple detection ─────────────────────────────── */
 /* Suspicion levels (from ESP32Marauder pineScanSnifferCallback):
  *   ALWAYS    — flag regardless of encryption state
@@ -338,8 +377,19 @@ static bool is_pineapple_device(const uint8_t *mac, uint16_t capab_info,
     return false;
 }
 
+/* Pwngrid device identification — not just "is it a pwnagotchi?" but
+ * "which specific tool is it?" */
+#define PWNGRID_NONE        0
+#define PWNGRID_PWNAGOTCHI  1  /* real pwnagotchi or unknown variant */
+#define PWNGRID_MINIGOTCHI  2  /* minigotchi-ESP32 (has "minigotchi":true) */
+#define PWNGRID_PALNAGOTCHI 3  /* Palnagotchi (has "pal":true) */
+#define PWNGRID_BRUCE       4  /* Bruce firmware pwngrid spam */
+
 /**
- * Check whether a management frame is from a pwnagotchi.
+ * Check whether a management frame is from a pwnagotchi-family device.
+ *
+ * Returns PWNGRID_NONE (0) if not a pwngrid frame, or a specific
+ * PWNGRID_* constant identifying the tool variant.
  *
  * Detection methods (combined from Marauder, minigotchi, and pwngrid source):
  *   1. Well-known source MAC DE:AD:BE:EF:DE:AD (pwngrid BPF filter key).
@@ -348,57 +398,84 @@ static bool is_pineapple_device(const uint8_t *mac, uint16_t capab_info,
  *      Multiple tags (222-226) increase confidence for non-MAC matches.
  *   3. Raw JSON content scan (Marauder approach) — searches for pwnagotchi
  *      JSON fields anywhere in the frame data, regardless of IE structure.
+ *   4. Tool identification via JSON keywords:
+ *      - "minigotchi" → minigotchi-ESP32
+ *      - "pal" followed by ":true" → Palnagotchi
+ *      - "Bruce" or "BRUCE" → Bruce firmware pwngrid spam
  */
-static bool is_pwnagotchi_beacon(const uint8_t *src_mac,
-                                  const uint8_t *ie, uint16_t ie_len)
+static uint8_t identify_pwngrid_device(const uint8_t *src_mac,
+                                        const uint8_t *ie, uint16_t ie_len)
 {
+    bool is_pwngrid = false;
+
     /* Method 1: well-known pwnagotchi MAC — definitive match */
     if (memcmp(src_mac, PWNAGOTCHI_MAC, 6) == 0) {
-        return true;
+        is_pwngrid = true;
     }
 
-    /* Method 2: pwngrid IE tags (222=payload, 223=compression,
-     * 224=identity, 225=signature, 226=stream header).
-     * A single IE 222 (payload) is sufficient — this tag is not used by
-     * any legitimate AP. For other tags (223-226), require 2+ distinct. */
-    uint8_t pwngrid_tags_seen = 0;
-    uint8_t pwngrid_tag_mask = 0;  /* bits 0-4 for tags 222-226 */
-    uint16_t pos = 0;
-    while (pos + 2 <= ie_len) {
-        uint8_t tag = ie[pos];
-        uint8_t len = ie[pos + 1];
-        pos += 2;
-        if (pos + len > ie_len) {
-            break;
+    /* Method 2: pwngrid IE tags */
+    if (!is_pwngrid) {
+        uint8_t pwngrid_tags_seen = 0;
+        uint8_t pwngrid_tag_mask = 0;
+        uint16_t pos = 0;
+        while (pos + 2 <= ie_len) {
+            uint8_t tag = ie[pos];
+            uint8_t len = ie[pos + 1];
+            pos += 2;
+            if (pos + len > ie_len) {
+                break;
+            }
+            if (tag >= 222 && tag <= 226) {
+                if (tag == 222 && len > 10) {
+                    is_pwngrid = true;
+                    break;
+                }
+                uint8_t bit = 1 << (tag - 222);
+                if (!(pwngrid_tag_mask & bit)) {
+                    pwngrid_tag_mask |= bit;
+                    pwngrid_tags_seen++;
+                }
+                if (pwngrid_tags_seen >= 2) {
+                    is_pwngrid = true;
+                    break;
+                }
+            }
+            pos += len;
         }
-        if (tag >= 222 && tag <= 226) {
-            /* IE 222 (payload) alone is definitive */
-            if (tag == 222 && len > 10) {
-                return true;
-            }
-            uint8_t bit = 1 << (tag - 222);
-            if (!(pwngrid_tag_mask & bit)) {
-                pwngrid_tag_mask |= bit;
-                pwngrid_tags_seen++;
-            }
-            if (pwngrid_tags_seen >= 2) {
-                return true;
-            }
-        }
-        pos += len;
     }
 
-    /* Method 3: raw JSON content scan (Marauder approach).
-     * Only useful if the caller passes correct IE data (beacon/probe resp
-     * with ie_offset=36). For other subtypes the "IE" data is actually
-     * fixed fields which can contain random byte matches.
-     * Requires multiple distinctive keys to reduce false positives. */
-    if (ie_len > 50 &&
+    /* Method 3: raw JSON content scan (fallback) */
+    if (!is_pwngrid && ie_len > 50 &&
         mem_contains(ie, ie_len, "pwnd_tot") &&
         mem_contains(ie, ie_len, "\"identity\"")) {
-        return true;
+        is_pwngrid = true;
     }
-    return false;
+
+    if (!is_pwngrid) {
+        return PWNGRID_NONE;
+    }
+
+    /* ── Tool identification via JSON keywords in IE payload ────────────── */
+
+    /* minigotchi-ESP32: sends "minigotchi":true in its modified beacon.
+     * This is the most reliable identifier — no other tool uses this field. */
+    if (mem_contains(ie, ie_len, "\"minigotchi\"")) {
+        return PWNGRID_MINIGOTCHI;
+    }
+
+    /* Palnagotchi: sends "pal":true in its beacon payload. */
+    if (mem_contains(ie, ie_len, "\"pal\"")) {
+        return PWNGRID_PALNAGOTCHI;
+    }
+
+    /* Bruce firmware: pwngrid spam names contain "Bruce" or "BRUCE".
+     * e.g., "my name is... BRUCE!", "Check M5 Bruce Project" */
+    if (mem_contains(ie, ie_len, "Bruce") ||
+        mem_contains(ie, ie_len, "BRUCE")) {
+        return PWNGRID_BRUCE;
+    }
+
+    return PWNGRID_PWNAGOTCHI;
 }
 
 /** Extract the SSID from tagged IEs. Returns length, 0 if hidden/absent. */
@@ -783,11 +860,20 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
             const uint8_t *ie = &frame[BEACON_IE_OFFSET];
             uint16_t ie_len = frame_len - BEACON_IE_OFFSET;
 
-            if (is_pwnagotchi_beacon(any_src, ie, ie_len) ||
-                is_pwnagotchi_beacon(any_bssid, ie, ie_len)) {
-                ESP_LOGW(TAG, "PWNAGOTCHI subtype=0x%02X sa=%02X:%02X:%02X:%02X:%02X:%02X "
+            uint8_t pwn_id = identify_pwngrid_device(any_src, ie, ie_len);
+            if (pwn_id == PWNGRID_NONE) {
+                pwn_id = identify_pwngrid_device(any_bssid, ie, ie_len);
+            }
+            if (pwn_id != PWNGRID_NONE) {
+                static const char *PWNGRID_NAMES[] = {
+                    "?", "Pwnagotchi", "Minigotchi", "Palnagotchi", "Bruce"
+                };
+                const char *tool = (pwn_id < sizeof(PWNGRID_NAMES)/sizeof(PWNGRID_NAMES[0]))
+                                   ? PWNGRID_NAMES[pwn_id] : "unknown";
+                ESP_LOGW(TAG, "PWNGRID [%s] subtype=0x%02X "
+                         "sa=%02X:%02X:%02X:%02X:%02X:%02X "
                          "bssid=%02X:%02X:%02X:%02X:%02X:%02X",
-                         subtype,
+                         tool, subtype,
                          any_src[0], any_src[1], any_src[2],
                          any_src[3], any_src[4], any_src[5],
                          any_bssid[0], any_bssid[1], any_bssid[2],
@@ -818,8 +904,11 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
 
     /* Pwnagotchi detection (already handled above for all mgmt frames,
      * but we still need the is_pwn flag to skip pineapple OUI check) */
-    bool is_pwn = is_pwnagotchi_beacon(src_addr, ie_start, ie_len) ||
-                  is_pwnagotchi_beacon(bssid, ie_start, ie_len);
+    uint8_t pwn_type = identify_pwngrid_device(src_addr, ie_start, ie_len);
+    if (pwn_type == PWNGRID_NONE) {
+        pwn_type = identify_pwngrid_device(bssid, ie_start, ie_len);
+    }
+    bool is_pwn = (pwn_type != PWNGRID_NONE);
 
     /* Pineapple detection — OUI check with suspicion levels + capability
      * and tagged parameter analysis (from Marauder pineScanSnifferCallback).
@@ -831,6 +920,34 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
             s_flags |= HG_FLAG_PINEAPPLE;
             portEXIT_CRITICAL_ISR(&s_counter_mux);
         }
+    }
+
+    /* ── Known tool SSID detection ──────────────────────────────────────── */
+    /* Exact-match against default AP names hardcoded in attack firmware.
+     * Sets pineapple flag because we're identifying a pentest device. */
+    if (ssid_len > 0 && !is_pwn) {
+        for (int i = 0; i < NUM_TOOL_SSIDS; i++) {
+            if (strcmp(ssid, TOOL_SSIDS[i].ssid) == 0) {
+                ESP_LOGW(TAG, "TOOL SSID [%s]: '%s'", TOOL_SSIDS[i].tool, ssid);
+                portENTER_CRITICAL_ISR(&s_counter_mux);
+                s_flags |= HG_FLAG_PINEAPPLE;
+                portEXIT_CRITICAL_ISR(&s_counter_mux);
+                break;
+            }
+        }
+    }
+
+    /* ── Marauder static beacon timestamp detection ──────────────────────── */
+    /* ESP32Marauder uses a hardcoded TSF timestamp (bytes 24-31) that never
+     * changes across beacons.  Real APs increment this value continuously.
+     * This is the strongest WiFi-side Marauder fingerprint. */
+    if (frame_len >= 32 && !is_pwn &&
+        memcmp(&frame[24], MARAUDER_TIMESTAMP, 8) == 0) {
+        ESP_LOGW(TAG, "TOOL [Marauder] static beacon timestamp detected");
+        portENTER_CRITICAL_ISR(&s_counter_mux);
+        s_flags |= HG_FLAG_PINEAPPLE;
+        s_flags |= HG_FLAG_BEACON_SPAM;
+        portEXIT_CRITICAL_ISR(&s_counter_mux);
     }
 
     /* Beacon spam: track unique source MACs and SSIDs.
