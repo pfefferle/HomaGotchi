@@ -37,6 +37,25 @@ PWNAGOTCHI_FACES = [
     "(#__#)",  # 20 debugging
 ]
 
+# Porkchop faces — M5PORKCHOP piglet avatar moods (from avatar.cpp)
+PORKCHOP_FACES = [
+    "(o 00)",   # neutral
+    "(00 o)",   # neutral (left)
+    "(= 00)",   # hunting
+    "(00 =)",   # hunting (left)
+    "(^ 00)",   # happy
+    "(@ 00)",   # excited
+    "(# 00)",   # angry
+    "(- 00)",   # sleepy
+    "(T 00)",   # sad
+]
+
+# Nugget faces — WiFi Nugget / HaxxDetector cat mascot
+NUGGET_FACES = [
+    "=^._.^=",
+    "₍^. .^₎⟆",
+]
+
 # Face indices by mood (referencing PWNAGOTCHI_FACES above)
 FACE_IDLE = [0, 16, 18]              # sleeping, bored, lonely
 FACE_MONITORING = [2, 5, 6, 8, 9, 14]  # awake, observing, cool, happy, motivated
@@ -46,6 +65,10 @@ FACE_ALERT_DEAUTH = [17, 19, 7]      # sad, broken, intense
 FACE_ALERT_EVIL_TWIN = [15, 4, 20]   # demotivated, wide-eyed, debugging
 FACE_ALERT_PWNAGOTCHI = [10, 13, 11] # grateful, friendly, excited
 FACE_ALERT_AUTH_FLOOD = [7, 20, 15]   # intense, debugging, demotivated
+FACE_ALERT_ASSOC_FLOOD = [7, 20, 15] # intense, debugging, demotivated
+FACE_ALERT_EAPOL = [17, 19, 20]      # sad, broken, debugging
+FACE_ALERT_RTS_CTS = [15, 7, 4]      # demotivated, intense, wide-eyed
+FACE_ALERT_SAE = [7, 12, 20]         # intense, smart, debugging
 FACE_ALERT_MULTI = [7, 19, 20, 15]   # intense, broken, debugging, demotivated
 
 # Status quips by detection type
@@ -113,6 +136,29 @@ QUIPS_AUTH_FLOOD = [
     "knock knock knock knock knock...",
     "credential stuffing in progress",
 ]
+QUIPS_ASSOC_FLOOD = [
+    "association request tsunami!",
+    "everyone wants to connect at once",
+    "AP table exhaustion in progress",
+]
+QUIPS_EAPOL_LOGOFF = [
+    "someone is kicking enterprise users off",
+    "EAPOL logoff attack detected",
+    "802.1X session hijack attempt",
+    "your enterprise WiFi is under attack",
+]
+QUIPS_RTS_CTS = [
+    "channel reservation abuse detected",
+    "someone is silencing the airwaves",
+    "CTS flood — virtual carrier sense attack",
+    "the channel is being held hostage",
+]
+QUIPS_SAE = [
+    "WPA3 dragonblood attack in progress",
+    "SAE commit flood detected",
+    "someone is trying to DoS WPA3",
+    "expensive crypto abuse detected",
+]
 QUIPS_MULTI = [
     "it's a full-on cyber apocalypse out here",
     "multiple threats, maximum paranoia!",
@@ -132,6 +178,10 @@ QUIP_MAP = {
     "karma": QUIPS_KARMA,
     "pineapple": QUIPS_PINEAPPLE,
     "auth_flood": QUIPS_AUTH_FLOOD,
+    "assoc_flood": QUIPS_ASSOC_FLOOD,
+    "eapol_logoff": QUIPS_EAPOL_LOGOFF,
+    "rts_cts": QUIPS_RTS_CTS,
+    "sae_flood": QUIPS_SAE,
 }
 
 # XP level thresholds (cumulative detections -> level name)
@@ -223,6 +273,10 @@ FLAG_KARMA = 1 << 5
 FLAG_PINEAPPLE = 1 << 6
 FLAG_RETALIATION = 1 << 7
 FLAG_AUTH_FLOOD = 1 << 8
+FLAG_ASSOC_FLOOD = 1 << 9
+FLAG_EAPOL_LOGOFF = 1 << 10
+FLAG_RTS_CTS = 1 << 11
+FLAG_SAE_FLOOD = 1 << 12
 
 # Human-friendly descriptions used in state attributes
 BLE_SIGNATURES = {

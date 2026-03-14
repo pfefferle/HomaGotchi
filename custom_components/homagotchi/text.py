@@ -25,6 +25,8 @@ from .const import (
     FACE_ALERT_PWNAGOTCHI,
     FACE_IDLE,
     FACE_MONITORING,
+    NUGGET_FACES,
+    PORKCHOP_FACES,
     PWNAGOTCHI_FACES,
     QUIPS_AUTH_FLOOD,
     QUIPS_BEACON_SPAM,
@@ -42,7 +44,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Map detector IDs (from EVENT_DETECTION events) to face mood indices.
+# Map detector IDs to pwnagotchi face mood indices (default mascot).
 _DETECTOR_FACE_MAP: dict[str, list[int]] = {
     "spam_activity": FACE_ALERT_BLE_SPAM,
     "presence": FACE_ALERT_FLIPPER,
@@ -54,6 +56,12 @@ _DETECTOR_FACE_MAP: dict[str, list[int]] = {
     f"{DOMAIN}_karma": FACE_ALERT_EVIL_TWIN,
     f"{DOMAIN}_pineapple": FACE_ALERT_FLIPPER,
     f"{DOMAIN}_auth_flood": FACE_ALERT_AUTH_FLOOD,
+}
+
+# Detectors that switch to a device-specific mascot face set.
+_DETECTOR_MASCOT_MAP: dict[str, list[str]] = {
+    f"{DOMAIN}_pineapple": PORKCHOP_FACES,
+    f"{DOMAIN}_beacon_spam": PORKCHOP_FACES,
 }
 
 # Map detector IDs to quip pools.
@@ -117,6 +125,14 @@ class PwnagotchiFaceText(TextEntity):
     def _pick_face(self, indices: list[int]) -> str:
         return PWNAGOTCHI_FACES[random.choice(indices)]
 
+    def _pick_face_for_detector(self, detector: str) -> str:
+        """Pick a face, using mascot faces if the detector has one."""
+        mascot = _DETECTOR_MASCOT_MAP.get(detector)
+        if mascot:
+            return random.choice(mascot)
+        indices = _DETECTOR_FACE_MAP.get(detector, FACE_ALERT_BLE_SPAM)
+        return self._pick_face(indices)
+
     @callback
     def _on_detection(self, event: Event) -> None:
         detector = event.data.get("detector", "")
@@ -137,8 +153,7 @@ class PwnagotchiFaceText(TextEntity):
         elif len(self._active_detectors) >= 3:
             self._attr_native_value = self._pick_face(FACE_ALERT_MULTI)
         else:
-            indices = _DETECTOR_FACE_MAP.get(detector, FACE_ALERT_BLE_SPAM)
-            self._attr_native_value = self._pick_face(indices)
+            self._attr_native_value = self._pick_face_for_detector(detector)
 
         self.async_write_ha_state()
 
@@ -154,8 +169,7 @@ class PwnagotchiFaceText(TextEntity):
             self._attr_native_value = self._pick_face(FACE_ALERT_MULTI)
         else:
             detector = random.choice(list(self._active_detectors))
-            indices = _DETECTOR_FACE_MAP.get(detector, FACE_ALERT_BLE_SPAM)
-            self._attr_native_value = self._pick_face(indices)
+            self._attr_native_value = self._pick_face_for_detector(detector)
 
         self.async_write_ha_state()
 
