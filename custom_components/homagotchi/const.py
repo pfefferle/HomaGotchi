@@ -45,6 +45,7 @@ FACE_ALERT_FLIPPER = [15, 8, 20]     # demotivated, cool, debugging
 FACE_ALERT_DEAUTH = [17, 19, 7]      # sad, broken, intense
 FACE_ALERT_EVIL_TWIN = [15, 4, 20]   # demotivated, wide-eyed, debugging
 FACE_ALERT_PWNAGOTCHI = [10, 13, 11] # grateful, friendly, excited
+FACE_ALERT_AUTH_FLOOD = [7, 20, 15]   # intense, debugging, demotivated
 FACE_ALERT_MULTI = [7, 19, 20, 15]   # intense, broken, debugging, demotivated
 
 # Status quips by detection type
@@ -106,6 +107,12 @@ QUIPS_PROBE_FLOOD = [
     "probe request overload!",
     "nosy device alert",
 ]
+QUIPS_AUTH_FLOOD = [
+    "someone is brute forcing the door",
+    "auth requests off the charts!",
+    "knock knock knock knock knock...",
+    "credential stuffing in progress",
+]
 QUIPS_MULTI = [
     "it's a full-on cyber apocalypse out here",
     "multiple threats, maximum paranoia!",
@@ -124,6 +131,7 @@ QUIP_MAP = {
     "probe_flood": QUIPS_PROBE_FLOOD,
     "karma": QUIPS_KARMA,
     "pineapple": QUIPS_PINEAPPLE,
+    "auth_flood": QUIPS_AUTH_FLOOD,
 }
 
 # XP level thresholds (cumulative detections -> level name)
@@ -214,6 +222,7 @@ FLAG_PROBE_FLOOD = 1 << 4
 FLAG_KARMA = 1 << 5
 FLAG_PINEAPPLE = 1 << 6
 FLAG_RETALIATION = 1 << 7
+FLAG_AUTH_FLOOD = 1 << 8
 
 # Human-friendly descriptions used in state attributes
 BLE_SIGNATURES = {

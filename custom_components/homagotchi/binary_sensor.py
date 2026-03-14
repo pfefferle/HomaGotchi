@@ -38,6 +38,7 @@ from .const import (
     DEFAULT_WIFI_DEAUTH_THRESHOLD,
     DOMAIN,
     EVENT_DETECTION,
+    FLAG_AUTH_FLOOD,
     FLAG_BEACON_SPAM,
     FLAG_DEAUTH,
     FLAG_EVIL_TWIN,
@@ -799,6 +800,27 @@ class WifiPineappleSensor(CompanionWifiSensor):
         return f"Suspicious OUI (Hak5/Alfa) in beacon (via {', '.join(reporters[:2])})"
 
 
+class WifiAuthFloodSensor(CompanionWifiSensor):
+    """Authentication frame flood detection sensor."""
+
+    _flag_mask = FLAG_AUTH_FLOOD
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
+        """Initialize the auth flood sensor."""
+        super().__init__(
+            hass, entry,
+            name="Auth Flood Detected",
+            unique_id=f"{DOMAIN}_auth_flood",
+            icon="mdi:shield-lock-open",
+        )
+
+    def _build_summary(self) -> str:
+        if not self._attr_is_on:
+            return "No auth flood"
+        reporters = [d["name"] for d in self._companion_devices.values()]
+        return f"High auth frame rate detected (via {', '.join(reporters[:2])})"
+
+
 class WifiRetaliationSensor(CompanionWifiSensor):
     """Indicates when the companion device is retaliating with defensive beacons."""
 
@@ -838,6 +860,7 @@ async def async_setup_entry(
             WifiProbeFloodSensor(hass, entry),
             WifiKarmaSensor(hass, entry),
             WifiPineappleSensor(hass, entry),
+            WifiAuthFloodSensor(hass, entry),
             WifiRetaliationSensor(hass, entry),
         ]
     )

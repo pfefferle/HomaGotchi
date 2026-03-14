@@ -15,35 +15,47 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "esp_wifi.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 
 static const char *TAG = "retaliate";
 
 /* ── Gotchi identity beacon ────────────────────────────────────────────────── */
 
-/* Source MAC for our pwnagotchi-style beacon (unique per device) */
-static const uint8_t GOTCHI_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+/*
+ * pwngrid peer advertisement format:
+ *   - Beacon frame (0x80) with Address2 = DE:AD:BE:EF:DE:AD
+ *   - Address3 = our unique session ID
+ *   - Beacon interval 100, capability 0x0411
+ *   - IE tag 222 (0xDE) with uncompressed JSON payload chunks (max 255 bytes)
+ *   - No compression, no signature, no IE 224/225/226 for broadcasts
+ */
 
-/* Well-known pwnagotchi BSSID used by pwngrid for peer discovery */
-static const uint8_t PWNGRID_BSSID[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
+/* Well-known pwnagotchi MAC — pwngrid filters on this in Address2 */
+static const uint8_t PWNGRID_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
 
-/* JSON identity payload (pwngrid format) */
-static const char GOTCHI_IDENTITY[] =
+/* Our unique session ID (Address3) */
+static const uint8_t SESSION_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE};
+
+/* pwngrid IE tag for JSON payload chunks */
+#define IE_PWNGRID_PAYLOAD  222  /* 0xDE */
+
+/* JSON identity template (pwngrid format).
+ * Fields match what real pwngrid advertises:
+ *   name, version, identity (64-char hex fingerprint), session_id,
+ *   grid_version, epoch, pwnd_run, pwnd_tot, uptime, face, timestamp
+ * The timestamp is set at runtime. */
+static const char GOTCHI_IDENTITY_FMT[] =
     "{\"name\":\"HomaGotchi\",\"version\":\"0.5.0\","
     "\"identity\":\"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\","
+    "\"session_id\":\"de:ad:be:ef:ca:fe\","
+    "\"grid_version\":\"1.10.6\","
     "\"epoch\":1,\"pwnd_run\":0,\"pwnd_tot\":0,"
-    "\"uptime\":0,\"face\":\"(◕‿‿◕)\"}";
-
-/* pwngrid IE tag numbers */
-#define IE_PWNGRID_PAYLOAD      222  /* 0xDE – JSON payload chunks */
-#define IE_PWNGRID_IDENTITY     224  /* 0xE0 – peer identity fingerprint */
-#define IE_PWNGRID_STREAM_HDR   226  /* 0xE2 – stream header */
-
-/* Fake identity fingerprint (64 hex chars = 32 bytes as ASCII) */
-static const char GOTCHI_FINGERPRINT[] =
-    "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+    "\"uptime\":%lu,\"face\":\"(◕‿‿◕)\","
+    "\"timestamp\":%lu}";
 
 /* ── Funny SSID pools (picked by threat type) ─────────────────────────────── */
 
@@ -82,6 +94,14 @@ static const char *SSIDS_EVIL_TWIN[] = {
     "Nice try, rogue AP",
 };
 #define NUM_SSIDS_EVIL_TWIN (sizeof(SSIDS_EVIL_TWIN) / sizeof(SSIDS_EVIL_TWIN[0]))
+
+static const char *SSIDS_AUTH_FLOOD[] = {
+    "Auth flood detected!",
+    "Stop brute forcing me",
+    "Your auth attempts are logged",
+    "EAPOL? More like E-A-NO-L",
+};
+#define NUM_SSIDS_AUTH_FLOOD (sizeof(SSIDS_AUTH_FLOOD) / sizeof(SSIDS_AUTH_FLOOD[0]))
 
 static const char *SSIDS_GENERIC[] = {
     "HomaGotchi is watching",
@@ -161,86 +181,89 @@ static void send_beacon(const char *ssid, const uint8_t *src_mac)
 }
 
 /**
- * Build and transmit a pwnagotchi-style beacon with a vendor IE
- * containing a JSON identity payload.
+ * Build and transmit a pwngrid-compatible beacon frame.
+ *
+ * pwngrid's BPF filter: "type mgt subtype beacon and ether src de:ad:be:ef:de:ad"
+ * So we MUST use a beacon frame (0x80) with Address2 = DE:AD:BE:EF:DE:AD.
+ * Address3 carries our unique session ID for peer differentiation.
+ * The JSON identity is sent as one or more IE 222 (0xDE) chunks (max 255 bytes).
  */
 void retaliation_send_gotchi_beacon(void)
 {
-    uint8_t json_len = (uint8_t)strlen(GOTCHI_IDENTITY);
-    uint8_t fp_len = (uint8_t)strlen(GOTCHI_FINGERPRINT);
+    /* Build JSON payload with dynamic uptime and timestamp.
+     * pwngrid adds "timestamp" at send time; real pwnagotchis
+     * also send uptime in seconds. */
+    char json_buf[384];
+    unsigned long uptime_s = (unsigned long)(esp_timer_get_time() / 1000000ULL);
+    unsigned long timestamp = uptime_s;  /* no RTC — use uptime as epoch proxy */
+    int json_total = snprintf(json_buf, sizeof(json_buf), GOTCHI_IDENTITY_FMT,
+                              uptime_s, timestamp);
+    if (json_total < 0 || json_total >= (int)sizeof(json_buf)) {
+        ESP_LOGE(TAG, "JSON overflow");
+        return;
+    }
 
     /*
-     * pwngrid uses 802.11 Action frames (type=0, subtype=13) with custom
-     * Information Elements (IE tags 222-226) for peer advertisement.
-     *
-     * Action frame layout:
-     *   [0..1]   Frame control (0xD0 0x00 = action)
+     * Beacon frame layout:
+     *   [0..1]   Frame control (0x80 0x00 = beacon)
      *   [2..3]   Duration
-     *   [4..9]   Destination (broadcast)
-     *   [10..15] Source address
-     *   [16..21] BSSID
+     *   [4..9]   Address1 = destination (broadcast)
+     *   [10..15] Address2 = source (MUST be DE:AD:BE:EF:DE:AD for pwngrid BPF)
+     *   [16..21] Address3 = BSSID (our session ID, per pwngrid protocol)
      *   [22..23] Sequence control
-     *   [24]     Category (127 = vendor-specific)
-     *   [25..27] OUI
-     *   [28+]    Tagged parameters (pwngrid IEs)
+     *   [24..31] Timestamp (8 bytes, zeroed — filled by hardware)
+     *   [32..33] Beacon interval (100 TU)
+     *   [34..35] Capability info (0x0411 = ESS + short preamble + short slot)
+     *   [36..]   Tagged parameters
      */
 
     uint8_t frame[512];
     memset(frame, 0, sizeof(frame));
 
-    /* Frame control: Action frame */
-    frame[0] = 0xD0;
+    /* Frame control: beacon */
+    frame[0] = 0x80;
     frame[1] = 0x00;
 
-    /* Destination: broadcast */
+    /* Address1: broadcast */
     memset(&frame[4], 0xFF, 6);
 
-    /* Source address (our unique MAC) */
-    memcpy(&frame[10], GOTCHI_MAC, 6);
+    /* Address2: well-known pwngrid MAC (BPF filter matches on this) */
+    memcpy(&frame[10], PWNGRID_MAC, 6);
 
-    /* BSSID: well-known pwnagotchi address for peer discovery */
-    memcpy(&frame[16], PWNGRID_BSSID, 6);
+    /* Address3: our unique session ID (per pwngrid protocol).
+     * pwngrid uses Address3 as the peer's SessionID for differentiation.
+     * It skips frames where Address3 == own SessionID (self-filter). */
+    memcpy(&frame[16], SESSION_MAC, 6);
 
-    /* pwngrid IEs start directly after the MAC header (offset 24),
-     * matching the format used by real pwnagotchi peers. */
-    uint16_t pos = 24;
+    /* Beacon interval: 100 TU */
+    frame[32] = 0x64;
+    frame[33] = 0x00;
 
-    /* IE 226 (0xE2): stream header – streamID(8) + seqNum(8) + seqTot(8) */
-    frame[pos++] = IE_PWNGRID_STREAM_HDR;
-    frame[pos++] = 24;  /* 3 × uint64 LE */
-    /* streamID: use a simple counter */
-    static uint32_t stream_id = 1;
-    frame[pos]     = (uint8_t)(stream_id & 0xFF);
-    frame[pos + 1] = (uint8_t)((stream_id >> 8) & 0xFF);
-    frame[pos + 2] = (uint8_t)((stream_id >> 16) & 0xFF);
-    frame[pos + 3] = (uint8_t)((stream_id >> 24) & 0xFF);
-    memset(&frame[pos + 4], 0, 4);  /* high 32 bits */
-    pos += 8;
-    /* seqNum = 0 */
-    memset(&frame[pos], 0, 8);
-    pos += 8;
-    /* seqTot = 1 */
-    frame[pos] = 1;
-    memset(&frame[pos + 1], 0, 7);
-    pos += 8;
-    stream_id++;
+    /* Capability: 0x0411 (matches real pwnagotchi beacons) */
+    frame[34] = 0x11;
+    frame[35] = 0x04;
 
-    /* IE 224 (0xE0): identity fingerprint */
-    frame[pos++] = IE_PWNGRID_IDENTITY;
-    frame[pos++] = fp_len;
-    memcpy(&frame[pos], GOTCHI_FINGERPRINT, fp_len);
-    pos += fp_len;
+    uint16_t pos = 36;
 
-    /* IE 222 (0xDE): JSON payload (uncompressed, no IE 223 needed) */
-    frame[pos++] = IE_PWNGRID_PAYLOAD;
-    frame[pos++] = json_len;
-    memcpy(&frame[pos], GOTCHI_IDENTITY, json_len);
-    pos += json_len;
+    /* SSID IE: empty (hidden network — pwngrid ignores SSID) */
+    frame[pos++] = 0x00;  /* IE tag: SSID */
+    frame[pos++] = 0x00;  /* length: 0 */
 
-    /*
-     * Send on the current channel — pwngrid peers advertise on whatever
-     * channel they're on, and other pwnagotchis hop to find them.
-     */
+    /* IE 222 (0xDE): JSON payload chunks, max 255 bytes each.
+     * pwngrid reassembles multiple IE 222 tags in order. */
+    int offset = 0;
+    while (offset < json_total) {
+        int chunk = json_total - offset;
+        if (chunk > 255) {
+            chunk = 255;
+        }
+        frame[pos++] = IE_PWNGRID_PAYLOAD;   /* 0xDE */
+        frame[pos++] = (uint8_t)chunk;
+        memcpy(&frame[pos], json_buf + offset, chunk);
+        pos += (uint16_t)chunk;
+        offset += chunk;
+    }
+
     esp_wifi_80211_tx(WIFI_IF_STA, frame, pos, false);
 }
 
@@ -295,6 +318,8 @@ void retaliation_fire(uint16_t flags)
             ssid = pick_ssid(SSIDS_EVIL_TWIN, NUM_SSIDS_EVIL_TWIN);
         } else if (flags & HG_FLAG_PINEAPPLE) {
             ssid = pick_ssid(SSIDS_FLIPPER, NUM_SSIDS_FLIPPER);
+        } else if (flags & HG_FLAG_AUTH_FLOOD) {
+            ssid = pick_ssid(SSIDS_AUTH_FLOOD, NUM_SSIDS_AUTH_FLOOD);
         } else if (flags & HG_FLAG_DEAUTH) {
             ssid = pick_ssid(SSIDS_DEAUTH, NUM_SSIDS_DEAUTH);
         } else {

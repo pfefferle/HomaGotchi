@@ -16,6 +16,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from .const import (
     DOMAIN,
     EVENT_DETECTION,
+    FACE_ALERT_AUTH_FLOOD,
     FACE_ALERT_BLE_SPAM,
     FACE_ALERT_DEAUTH,
     FACE_ALERT_EVIL_TWIN,
@@ -25,6 +26,7 @@ from .const import (
     FACE_IDLE,
     FACE_MONITORING,
     PWNAGOTCHI_FACES,
+    QUIPS_AUTH_FLOOD,
     QUIPS_BEACON_SPAM,
     QUIPS_BLE_SPAM,
     QUIPS_DEAUTH,
@@ -51,6 +53,7 @@ _DETECTOR_FACE_MAP: dict[str, list[int]] = {
     f"{DOMAIN}_probe_flood": FACE_ALERT_BLE_SPAM,
     f"{DOMAIN}_karma": FACE_ALERT_EVIL_TWIN,
     f"{DOMAIN}_pineapple": FACE_ALERT_FLIPPER,
+    f"{DOMAIN}_auth_flood": FACE_ALERT_AUTH_FLOOD,
 }
 
 # Map detector IDs to quip pools.
@@ -64,6 +67,7 @@ _DETECTOR_QUIP_MAP: dict[str, list[str]] = {
     f"{DOMAIN}_probe_flood": QUIPS_PROBE_FLOOD,
     f"{DOMAIN}_karma": QUIPS_KARMA,
     f"{DOMAIN}_pineapple": QUIPS_PINEAPPLE,
+    f"{DOMAIN}_auth_flood": QUIPS_AUTH_FLOOD,
 }
 
 
