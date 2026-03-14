@@ -75,6 +75,7 @@ static const char *ATTACK_SSID_SUBSTRINGS[] = {
     "Wu-Tang LAN",
     "Bill Wi the Science Fi",
     "Drop It Like Its Hotspot",
+    "USSID FATHERSHIP",   /* M5PORKCHOP BACON mode */
 };
 #define NUM_ATTACK_SSIDS (sizeof(ATTACK_SSID_SUBSTRINGS) / sizeof(ATTACK_SSID_SUBSTRINGS[0]))
 
@@ -267,8 +268,9 @@ static bool is_pineapple_device(const uint8_t *mac, uint16_t capab_info,
     /* Capability + tagged parameter minimalism check (from Marauder).
      * Real APs have many IEs (supported rates, HT capabilities, RSN, etc.).
      * Attack devices often have only SSID + DS Parameter Set (2 tags).
-     * Combined with minimal capability (0x0001) = high-confidence pineapple. */
-    if (capab_info == 0x0001) {
+     * Combined with minimal capability (0x0001 or 0x0104) = high-confidence
+     * pineapple.  M5PORKCHOP BACON mode uses 0x0104 (ESS + short preamble). */
+    if (capab_info == 0x0001 || capab_info == 0x0104) {
         int ie_count = 0;
         uint16_t pos = 0;
         while (pos + 2 <= ie_len) {
@@ -280,6 +282,27 @@ static bool is_pineapple_device(const uint8_t *mac, uint16_t capab_info,
         }
         if (ie_count <= 3) {  /* SSID + DS + maybe one more */
             return true;
+        }
+    }
+
+    /* Known attack vendor IEs — scan for tool-specific OUIs in IE 221.
+     * M5PORKCHOP BACON mode: OUI 50:52:4B ("PRK"), type 0x01 — embeds
+     * nearby AP fingerprints into beacon vendor IEs. */
+    {
+        uint16_t pos = 0;
+        while (pos + 2 <= ie_len) {
+            uint8_t tag = ie[pos];
+            uint8_t len = ie[pos + 1];
+            pos += 2;
+            if (pos + len > ie_len) break;
+            if (tag == IE_TAG_VENDOR && len >= 4) {
+                /* Check for M5PORKCHOP "PRK" OUI */
+                if (ie[pos] == 0x50 && ie[pos+1] == 0x52 &&
+                    ie[pos+2] == 0x4B && ie[pos+3] == 0x01) {
+                    return true;
+                }
+            }
+            pos += len;
         }
     }
 
@@ -575,14 +598,15 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
             s_flags |= HG_FLAG_DEAUTH;
         }
 
-        /* Reason code analysis: attack tools typically use reason 1
-         * (unspecified) or 2 (previous auth no longer valid).
+        /* Reason code analysis: attack tools use distinctive reason codes.
+         *   - Reason 1 (unspecified): minigotchi, Nugget-Invader default
+         *   - Reason 2 (prev auth invalid): Marauder default
+         *   - Reason 7 (Class 3 from non-assoc STA): M5PORKCHOP forward deauth
          * Legitimate deauths use specific codes like 3, 4, 5, 8.
-         * When we see suspicious reason codes, lower the effective
-         * threshold by counting them with extra weight. */
+         * Double-count suspicious reasons to lower effective threshold. */
         if (frame_len >= DEAUTH_MIN_LEN) {
             uint16_t reason = (uint16_t)frame[24] | ((uint16_t)frame[25] << 8);
-            if (reason <= 2) {
+            if (reason <= 2 || reason == 7) {
                 /* Double-count suspicious reason codes */
                 s_deauth++;
             }
@@ -605,7 +629,7 @@ static void IRAM_ATTR sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type)
         }
         if (frame_len >= DEAUTH_MIN_LEN) {
             uint16_t reason = (uint16_t)frame[24] | ((uint16_t)frame[25] << 8);
-            if (reason <= 2) {
+            if (reason <= 2 || reason == 7) {
                 s_disassoc++;
             }
         }
